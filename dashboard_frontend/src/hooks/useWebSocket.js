@@ -1,6 +1,10 @@
 import { useEffect, useRef } from 'react';
 import { useTradingContext, WS_URL } from '../context/TradingContext';
 
+// Singleton WebSocket connection to prevent multiple connections
+let globalWs = null;
+let globalWsListeners = new Set();
+
 const useWebSocket = () => {
   const {
     selectedPair,
@@ -9,101 +13,98 @@ const useWebSocket = () => {
     setConnectionStatus,
   } = useTradingContext();
 
-  const wsRef = useRef(null);
   const selectedPairRef = useRef(selectedPair);
+  const setStatsRef = useRef(setStats);
+  const setConnectionStatusRef = useRef(setConnectionStatus);
 
-  // Keep ref updated
+  // Keep refs updated
   useEffect(() => {
     selectedPairRef.current = selectedPair;
   }, [selectedPair]);
 
   useEffect(() => {
+    setStatsRef.current = setStats;
+    setConnectionStatusRef.current = setConnectionStatus;
+  }, [setStats, setConnectionStatus]);
+
+  useEffect(() => {
     if (!autoRefresh) {
-      if (wsRef.current) {
-        wsRef.current.close();
-        wsRef.current = null;
-        setConnectionStatus('disconnected');
+      // Close global connection when autoRefresh is disabled
+      if (globalWs) {
+        globalWs.close();
+        globalWs = null;
       }
+      setConnectionStatusRef.current('disconnected');
       return;
     }
 
-    // Don't reconnect if already connected
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      return;
-    }
-
-    let reconnectTimeout = null;
-    let isCleaningUp = false;
-
-    const connect = () => {
-      if (isCleaningUp) return;
-
+    const handleMessage = (event) => {
       try {
-        const ws = new WebSocket(WS_URL);
-        wsRef.current = ws;
-
-        ws.onopen = () => {
-          console.log('WebSocket connected');
-          setConnectionStatus('connected');
-        };
-
-        ws.onmessage = (event) => {
-          try {
-            const data = JSON.parse(event.data);
-
-            if (data.type === 'price_update') {
-              const pairData = data.prices.find(p => p.pair === selectedPairRef.current);
-
-              if (pairData) {
-                setStats(prev => prev ? {
-                  ...prev,
-                  latest_price: pairData.price,
-                  latest_time: pairData.time
-                } : prev);
-              }
-            }
-          } catch (error) {
-            console.error('WebSocket message error:', error);
+        const data = JSON.parse(event.data);
+        if (data.type === 'price_update') {
+          const pairData = data.prices.find(p => p.pair === selectedPairRef.current);
+          if (pairData) {
+            setStatsRef.current(prev => prev ? {
+              ...prev,
+              latest_price: pairData.price,
+              latest_time: pairData.time
+            } : prev);
           }
+        }
+      } catch (error) {
+        console.error('WebSocket message error:', error);
+      }
+    };
+
+    // Add this component's listener
+    globalWsListeners.add(handleMessage);
+
+    // Create connection if doesn't exist
+    if (!globalWs || globalWs.readyState === WebSocket.CLOSED) {
+      try {
+        globalWs = new WebSocket(WS_URL);
+
+        globalWs.onopen = () => {
+          console.log('WebSocket connected (singleton)');
+          setConnectionStatusRef.current('connected');
         };
 
-        ws.onerror = (error) => {
+        globalWs.onmessage = (event) => {
+          // Broadcast to all listeners
+          globalWsListeners.forEach(listener => listener(event));
+        };
+
+        globalWs.onerror = (error) => {
           console.error('WebSocket error:', error);
-          setConnectionStatus('error');
+          setConnectionStatusRef.current('error');
         };
 
-        ws.onclose = () => {
+        globalWs.onclose = () => {
           console.log('WebSocket disconnected');
-          setConnectionStatus('disconnected');
-          wsRef.current = null;
-
-          // Reconnect after 5 seconds if not cleaning up
-          if (!isCleaningUp && autoRefresh) {
-            reconnectTimeout = setTimeout(connect, 5000);
-          }
+          setConnectionStatusRef.current('disconnected');
+          globalWs = null;
         };
       } catch (error) {
         console.error('WebSocket connection error:', error);
-        setConnectionStatus('error');
+        setConnectionStatusRef.current('error');
       }
-    };
+    } else if (globalWs.readyState === WebSocket.OPEN) {
+      setConnectionStatusRef.current('connected');
+    }
 
-    connect();
-
+    // Cleanup - remove listener but don't close shared connection
     return () => {
-      isCleaningUp = true;
-      if (reconnectTimeout) {
-        clearTimeout(reconnectTimeout);
-      }
-      if (wsRef.current) {
-        wsRef.current.close();
-        wsRef.current = null;
+      globalWsListeners.delete(handleMessage);
+      // Only close if no more listeners
+      if (globalWsListeners.size === 0 && globalWs) {
+        globalWs.close();
+        globalWs = null;
       }
     };
-  }, [autoRefresh, setConnectionStatus, setStats]);
+  }, [autoRefresh]);
 
   return {
-    isConnected: wsRef.current?.readyState === WebSocket.OPEN
+    isConnected: globalWs?.readyState === WebSocket.OPEN
   };
 };
 

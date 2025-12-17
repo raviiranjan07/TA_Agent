@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback } from 'react';
+import { useState, useCallback } from 'react';
 import { RefreshCw } from 'lucide-react';
 import TradingViewChart from './TradingViewChart';
 import ChartToolbar from './ChartToolbar';
@@ -7,38 +7,28 @@ import { useTradingContext } from '../context/TradingContext';
 const ChartContainer = () => {
   const { chartData, isLoading, theme } = useTradingContext();
   const [selectedTool, setSelectedTool] = useState('cursor');
-  const chartRef = useRef(null);
 
   const handleToolSelect = useCallback((toolId) => {
     setSelectedTool(toolId);
   }, []);
 
   const handleZoomIn = useCallback(() => {
-    // Zoom in functionality handled by TradingView chart
     console.log('Zoom in - use mouse wheel or pinch');
   }, []);
 
   const handleZoomOut = useCallback(() => {
-    // Zoom out functionality handled by TradingView chart
     console.log('Zoom out - use mouse wheel or pinch');
   }, []);
 
   const handleResetZoom = useCallback(() => {
-    // Reset zoom - fit content
     console.log('Reset zoom - double click on chart');
   }, []);
 
   const handleScreenshot = useCallback(() => {
-    // Screenshot functionality
-    const chartElement = document.querySelector('.tv-lightweight-charts');
-    if (chartElement) {
-      // Use html2canvas or similar library for screenshots
-      console.log('Screenshot - install html2canvas for this feature');
-    }
+    console.log('Screenshot - install html2canvas for this feature');
   }, []);
 
   const handleClearDrawings = useCallback(() => {
-    // Clear drawings
     console.log('Clear drawings');
   }, []);
 
@@ -88,7 +78,7 @@ const ChartContainer = () => {
   }
 
   return (
-    <div className={`${theme.card}`} ref={chartRef}>
+    <div className={`${theme.card}`}>
       <ChartToolbar
         selectedTool={selectedTool}
         onToolSelect={handleToolSelect}

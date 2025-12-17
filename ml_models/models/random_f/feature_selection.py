@@ -254,7 +254,11 @@ df['direction'] = df['direction'].replace({-1: 2})
 # Calculate: "What % will price change in 5 candles from now?"
 df['price_change_pct'] = (df['close'].shift(-5) - df['close']) / df['close'] * 100
 
-df = df.dropna()
+# Only drop rows where TARGET columns are NaN (not all columns!)
+rows_before_target_drop = len(df)
+df = df.dropna(subset=['direction', 'price_change_pct'])
+print(f"  Dropped {rows_before_target_drop - len(df)} rows with NaN in targets")
+print(f"  Remaining rows after target creation: {len(df):,}")
 
 print(f"\n✅ Targets created (3 Classes)")
 print("Direction Distribution (0=Neutral, 1=Long, 2=Short):")

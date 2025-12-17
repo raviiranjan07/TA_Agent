@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef } from 'react';
 import { createChart, CrosshairMode } from 'lightweight-charts';
 import { useTradingContext } from '../context/TradingContext';
 
@@ -12,7 +12,7 @@ const TradingViewChart = () => {
   const ma50SeriesRef = useRef(null);
   const bbUpperSeriesRef = useRef(null);
   const bbLowerSeriesRef = useRef(null);
-  const resizeObserverRef = useRef(null);
+  const priceLineRef = useRef(null);
 
   const {
     chartData,
@@ -25,77 +25,44 @@ const TradingViewChart = () => {
     stats,
   } = useTradingContext();
 
-  // Chart colors
-  const colors = {
-    backgroundColor: isDarkMode ? '#131722' : '#ffffff',
-    textColor: isDarkMode ? '#d1d4dc' : '#131722',
-    gridColor: isDarkMode ? '#1e222d' : '#f0f0f0',
-    borderColor: isDarkMode ? '#2a2e39' : '#e0e0e0',
-    upColor: '#26a69a',
-    downColor: '#ef5350',
-    wickUpColor: '#26a69a',
-    wickDownColor: '#ef5350',
-    volumeUpColor: 'rgba(38, 166, 154, 0.5)',
-    volumeDownColor: 'rgba(239, 83, 80, 0.5)',
-    ma7Color: '#f59e0b',
-    ma20Color: '#3b82f6',
-    ma50Color: '#8b5cf6',
-    bbColor: '#9333ea',
-    crosshairColor: isDarkMode ? '#758696' : '#9B9B9B',
-  };
-
-  // Initialize chart
+  // Initialize chart only once
   useEffect(() => {
-    if (!chartContainerRef.current) return;
+    if (!chartContainerRef.current || chartRef.current) return;
 
-    // Create chart
     const chart = createChart(chartContainerRef.current, {
       width: chartContainerRef.current.clientWidth,
       height: 600,
       layout: {
-        background: { type: 'solid', color: colors.backgroundColor },
-        textColor: colors.textColor,
+        background: { type: 'solid', color: '#131722' },
+        textColor: '#d1d4dc',
       },
       grid: {
-        vertLines: { color: colors.gridColor },
-        horzLines: { color: colors.gridColor },
+        vertLines: { color: '#1e222d' },
+        horzLines: { color: '#1e222d' },
       },
       crosshair: {
         mode: CrosshairMode.Normal,
         vertLine: {
-          color: colors.crosshairColor,
+          color: '#758696',
           width: 1,
           style: 2,
-          labelBackgroundColor: colors.borderColor,
+          labelBackgroundColor: '#2a2e39',
         },
         horzLine: {
-          color: colors.crosshairColor,
+          color: '#758696',
           width: 1,
           style: 2,
-          labelBackgroundColor: colors.borderColor,
+          labelBackgroundColor: '#2a2e39',
         },
       },
       rightPriceScale: {
-        borderColor: colors.borderColor,
-        scaleMargins: {
-          top: 0.1,
-          bottom: 0.2,
-        },
+        borderColor: '#2a2e39',
+        scaleMargins: { top: 0.1, bottom: 0.2 },
       },
       timeScale: {
-        borderColor: colors.borderColor,
+        borderColor: '#2a2e39',
         timeVisible: true,
         secondsVisible: false,
-        tickMarkFormatter: (time) => {
-          const date = new Date(time * 1000);
-          return date.toLocaleString('en-IN', {
-            timeZone: 'Asia/Kolkata',
-            month: 'short',
-            day: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit',
-          });
-        },
       },
       handleScroll: {
         mouseWheel: true,
@@ -113,80 +80,66 @@ const TradingViewChart = () => {
     chartRef.current = chart;
 
     // Create candlestick series
-    const candlestickSeries = chart.addCandlestickSeries({
-      upColor: colors.upColor,
-      downColor: colors.downColor,
-      borderDownColor: colors.downColor,
-      borderUpColor: colors.upColor,
-      wickDownColor: colors.wickDownColor,
-      wickUpColor: colors.wickUpColor,
+    candlestickSeriesRef.current = chart.addCandlestickSeries({
+      upColor: '#26a69a',
+      downColor: '#ef5350',
+      borderDownColor: '#ef5350',
+      borderUpColor: '#26a69a',
+      wickDownColor: '#ef5350',
+      wickUpColor: '#26a69a',
     });
-    candlestickSeriesRef.current = candlestickSeries;
 
     // Create volume series
-    const volumeSeries = chart.addHistogramSeries({
-      color: colors.volumeUpColor,
-      priceFormat: {
-        type: 'volume',
-      },
+    volumeSeriesRef.current = chart.addHistogramSeries({
+      color: 'rgba(38, 166, 154, 0.5)',
+      priceFormat: { type: 'volume' },
       priceScaleId: '',
-      scaleMargins: {
-        top: 0.85,
-        bottom: 0,
-      },
+      scaleMargins: { top: 0.85, bottom: 0 },
     });
-    volumeSeriesRef.current = volumeSeries;
 
-    // Create MA7 line series
-    const ma7Series = chart.addLineSeries({
-      color: colors.ma7Color,
+    // Create MA series
+    ma7SeriesRef.current = chart.addLineSeries({
+      color: '#f59e0b',
       lineWidth: 2,
       crosshairMarkerVisible: false,
       priceLineVisible: false,
       lastValueVisible: false,
     });
-    ma7SeriesRef.current = ma7Series;
 
-    // Create MA20 line series
-    const ma20Series = chart.addLineSeries({
-      color: colors.ma20Color,
+    ma20SeriesRef.current = chart.addLineSeries({
+      color: '#3b82f6',
       lineWidth: 2,
       crosshairMarkerVisible: false,
       priceLineVisible: false,
       lastValueVisible: false,
     });
-    ma20SeriesRef.current = ma20Series;
 
-    // Create MA50 line series
-    const ma50Series = chart.addLineSeries({
-      color: colors.ma50Color,
+    ma50SeriesRef.current = chart.addLineSeries({
+      color: '#8b5cf6',
       lineWidth: 2,
       crosshairMarkerVisible: false,
       priceLineVisible: false,
       lastValueVisible: false,
     });
-    ma50SeriesRef.current = ma50Series;
 
     // Create Bollinger Bands series
-    const bbUpperSeries = chart.addLineSeries({
-      color: colors.bbColor,
+    bbUpperSeriesRef.current = chart.addLineSeries({
+      color: '#9333ea',
       lineWidth: 1,
       lineStyle: 2,
       crosshairMarkerVisible: false,
       priceLineVisible: false,
       lastValueVisible: false,
     });
-    bbUpperSeriesRef.current = bbUpperSeries;
 
-    const bbLowerSeries = chart.addLineSeries({
-      color: colors.bbColor,
+    bbLowerSeriesRef.current = chart.addLineSeries({
+      color: '#9333ea',
       lineWidth: 1,
       lineStyle: 2,
       crosshairMarkerVisible: false,
       priceLineVisible: false,
       lastValueVisible: false,
     });
-    bbLowerSeriesRef.current = bbLowerSeries;
 
     // Handle resize
     const handleResize = () => {
@@ -197,188 +150,135 @@ const TradingViewChart = () => {
       }
     };
 
-    resizeObserverRef.current = new ResizeObserver(handleResize);
-    resizeObserverRef.current.observe(chartContainerRef.current);
+    const resizeObserver = new ResizeObserver(handleResize);
+    resizeObserver.observe(chartContainerRef.current);
 
     return () => {
-      if (resizeObserverRef.current) {
-        resizeObserverRef.current.disconnect();
-      }
+      resizeObserver.disconnect();
       if (chartRef.current) {
         chartRef.current.remove();
+        chartRef.current = null;
       }
     };
   }, []);
 
-  // Update chart theme
+  // Update theme
   useEffect(() => {
     if (!chartRef.current) return;
 
+    const bgColor = isDarkMode ? '#131722' : '#ffffff';
+    const textColor = isDarkMode ? '#d1d4dc' : '#131722';
+    const gridColor = isDarkMode ? '#1e222d' : '#f0f0f0';
+    const borderColor = isDarkMode ? '#2a2e39' : '#e0e0e0';
+
     chartRef.current.applyOptions({
       layout: {
-        background: { type: 'solid', color: colors.backgroundColor },
-        textColor: colors.textColor,
+        background: { type: 'solid', color: bgColor },
+        textColor: textColor,
       },
       grid: {
-        vertLines: { color: colors.gridColor },
-        horzLines: { color: colors.gridColor },
+        vertLines: { color: gridColor },
+        horzLines: { color: gridColor },
       },
-      rightPriceScale: {
-        borderColor: colors.borderColor,
-      },
-      timeScale: {
-        borderColor: colors.borderColor,
-      },
+      rightPriceScale: { borderColor: borderColor },
+      timeScale: { borderColor: borderColor },
     });
-  }, [isDarkMode, colors.backgroundColor, colors.textColor, colors.gridColor, colors.borderColor]);
+  }, [isDarkMode]);
+
+  // Helper function to parse timestamp
+  const parseTimestamp = (d) => {
+    if (typeof d.time === 'string') {
+      return Math.floor(new Date(d.time).getTime() / 1000);
+    } else if (d.timestamp) {
+      return Math.floor(d.timestamp / 1000);
+    }
+    return Math.floor(d.time / 1000);
+  };
 
   // Update chart data
   useEffect(() => {
     if (!chartData || chartData.length === 0) return;
-    if (!candlestickSeriesRef.current || !volumeSeriesRef.current) return;
+    if (!candlestickSeriesRef.current) return;
 
-    // Format data for lightweight-charts
-    const candleData = chartData.map((d) => {
-      // Parse time from ISO string or timestamp
-      let timestamp;
-      if (typeof d.time === 'string') {
-        timestamp = Math.floor(new Date(d.time).getTime() / 1000);
-      } else if (d.timestamp) {
-        timestamp = Math.floor(d.timestamp / 1000);
-      } else {
-        timestamp = Math.floor(d.time / 1000);
-      }
-
-      return {
-        time: timestamp,
+    // Format candlestick data
+    const candleData = chartData
+      .map((d) => ({
+        time: parseTimestamp(d),
         open: d.open,
         high: d.high,
         low: d.low,
         close: d.close,
-      };
-    }).filter(d => !isNaN(d.time) && d.time > 0);
+      }))
+      .filter((d) => !isNaN(d.time) && d.time > 0)
+      .sort((a, b) => a.time - b.time);
 
-    const volumeData = chartData.map((d, index) => {
-      let timestamp;
-      if (typeof d.time === 'string') {
-        timestamp = Math.floor(new Date(d.time).getTime() / 1000);
-      } else if (d.timestamp) {
-        timestamp = Math.floor(d.timestamp / 1000);
-      } else {
-        timestamp = Math.floor(d.time / 1000);
-      }
-
-      return {
-        time: timestamp,
+    // Format volume data
+    const volumeData = chartData
+      .map((d) => ({
+        time: parseTimestamp(d),
         value: d.volume || 0,
-        color: d.close >= d.open ? colors.volumeUpColor : colors.volumeDownColor,
-      };
-    }).filter(d => !isNaN(d.time) && d.time > 0);
+        color: d.close >= d.open ? 'rgba(38, 166, 154, 0.5)' : 'rgba(239, 83, 80, 0.5)',
+      }))
+      .filter((d) => !isNaN(d.time) && d.time > 0)
+      .sort((a, b) => a.time - b.time);
 
-    // Set candlestick data
     candlestickSeriesRef.current.setData(candleData);
 
-    // Set volume data
-    if (showVolume) {
+    if (showVolume && volumeSeriesRef.current) {
       volumeSeriesRef.current.setData(volumeData);
-    } else {
+    } else if (volumeSeriesRef.current) {
       volumeSeriesRef.current.setData([]);
     }
 
-    // MA7 data
+    // MA7
     if (showMA7 && ma7SeriesRef.current) {
       const ma7Data = chartData
-        .filter(d => d.ma7 != null)
-        .map((d) => {
-          let timestamp;
-          if (typeof d.time === 'string') {
-            timestamp = Math.floor(new Date(d.time).getTime() / 1000);
-          } else if (d.timestamp) {
-            timestamp = Math.floor(d.timestamp / 1000);
-          } else {
-            timestamp = Math.floor(d.time / 1000);
-          }
-          return { time: timestamp, value: d.ma7 };
-        })
-        .filter(d => !isNaN(d.time) && d.time > 0);
+        .filter((d) => d.ma7 != null)
+        .map((d) => ({ time: parseTimestamp(d), value: d.ma7 }))
+        .filter((d) => !isNaN(d.time) && d.time > 0)
+        .sort((a, b) => a.time - b.time);
       ma7SeriesRef.current.setData(ma7Data);
     } else if (ma7SeriesRef.current) {
       ma7SeriesRef.current.setData([]);
     }
 
-    // MA20 data
+    // MA20
     if (showMA20 && ma20SeriesRef.current) {
       const ma20Data = chartData
-        .filter(d => d.ma20 != null)
-        .map((d) => {
-          let timestamp;
-          if (typeof d.time === 'string') {
-            timestamp = Math.floor(new Date(d.time).getTime() / 1000);
-          } else if (d.timestamp) {
-            timestamp = Math.floor(d.timestamp / 1000);
-          } else {
-            timestamp = Math.floor(d.time / 1000);
-          }
-          return { time: timestamp, value: d.ma20 };
-        })
-        .filter(d => !isNaN(d.time) && d.time > 0);
+        .filter((d) => d.ma20 != null)
+        .map((d) => ({ time: parseTimestamp(d), value: d.ma20 }))
+        .filter((d) => !isNaN(d.time) && d.time > 0)
+        .sort((a, b) => a.time - b.time);
       ma20SeriesRef.current.setData(ma20Data);
     } else if (ma20SeriesRef.current) {
       ma20SeriesRef.current.setData([]);
     }
 
-    // MA50 data
+    // MA50
     if (showMA50 && ma50SeriesRef.current) {
       const ma50Data = chartData
-        .filter(d => d.ma50 != null)
-        .map((d) => {
-          let timestamp;
-          if (typeof d.time === 'string') {
-            timestamp = Math.floor(new Date(d.time).getTime() / 1000);
-          } else if (d.timestamp) {
-            timestamp = Math.floor(d.timestamp / 1000);
-          } else {
-            timestamp = Math.floor(d.time / 1000);
-          }
-          return { time: timestamp, value: d.ma50 };
-        })
-        .filter(d => !isNaN(d.time) && d.time > 0);
+        .filter((d) => d.ma50 != null)
+        .map((d) => ({ time: parseTimestamp(d), value: d.ma50 }))
+        .filter((d) => !isNaN(d.time) && d.time > 0)
+        .sort((a, b) => a.time - b.time);
       ma50SeriesRef.current.setData(ma50Data);
     } else if (ma50SeriesRef.current) {
       ma50SeriesRef.current.setData([]);
     }
 
-    // Bollinger Bands data
+    // Bollinger Bands
     if (showBB && bbUpperSeriesRef.current && bbLowerSeriesRef.current) {
       const bbUpperData = chartData
-        .filter(d => d.bb_upper != null)
-        .map((d) => {
-          let timestamp;
-          if (typeof d.time === 'string') {
-            timestamp = Math.floor(new Date(d.time).getTime() / 1000);
-          } else if (d.timestamp) {
-            timestamp = Math.floor(d.timestamp / 1000);
-          } else {
-            timestamp = Math.floor(d.time / 1000);
-          }
-          return { time: timestamp, value: d.bb_upper };
-        })
-        .filter(d => !isNaN(d.time) && d.time > 0);
+        .filter((d) => d.bb_upper != null)
+        .map((d) => ({ time: parseTimestamp(d), value: d.bb_upper }))
+        .filter((d) => !isNaN(d.time) && d.time > 0)
+        .sort((a, b) => a.time - b.time);
 
       const bbLowerData = chartData
-        .filter(d => d.bb_lower != null)
-        .map((d) => {
-          let timestamp;
-          if (typeof d.time === 'string') {
-            timestamp = Math.floor(new Date(d.time).getTime() / 1000);
-          } else if (d.timestamp) {
-            timestamp = Math.floor(d.timestamp / 1000);
-          } else {
-            timestamp = Math.floor(d.time / 1000);
-          }
-          return { time: timestamp, value: d.bb_lower };
-        })
-        .filter(d => !isNaN(d.time) && d.time > 0);
+        .filter((d) => d.bb_lower != null)
+        .map((d) => ({ time: parseTimestamp(d), value: d.bb_lower }))
+        .filter((d) => !isNaN(d.time) && d.time > 0)
+        .sort((a, b) => a.time - b.time);
 
       bbUpperSeriesRef.current.setData(bbUpperData);
       bbLowerSeriesRef.current.setData(bbLowerData);
@@ -388,30 +288,34 @@ const TradingViewChart = () => {
     }
 
     // Fit content
-    chartRef.current.timeScale().fitContent();
+    if (chartRef.current) {
+      chartRef.current.timeScale().fitContent();
+    }
+  }, [chartData, showMA7, showMA20, showMA50, showBB, showVolume]);
 
-  }, [chartData, showMA7, showMA20, showMA50, showBB, showVolume, colors.volumeUpColor, colors.volumeDownColor]);
-
-  // Add price line for current price
+  // Update price line
   useEffect(() => {
     if (!candlestickSeriesRef.current || !stats?.latest_price) return;
 
-    // Remove existing price lines
-    const priceLine = candlestickSeriesRef.current.createPriceLine({
+    // Remove existing price line
+    if (priceLineRef.current) {
+      try {
+        candlestickSeriesRef.current.removePriceLine(priceLineRef.current);
+      } catch (e) {
+        // Ignore if already removed
+      }
+    }
+
+    // Create new price line
+    priceLineRef.current = candlestickSeriesRef.current.createPriceLine({
       price: stats.latest_price,
-      color: stats.change_24h_percent >= 0 ? colors.upColor : colors.downColor,
+      color: stats.change_24h_percent >= 0 ? '#26a69a' : '#ef5350',
       lineWidth: 1,
       lineStyle: 2,
       axisLabelVisible: true,
       title: 'Current',
     });
-
-    return () => {
-      if (candlestickSeriesRef.current) {
-        candlestickSeriesRef.current.removePriceLine(priceLine);
-      }
-    };
-  }, [stats?.latest_price, stats?.change_24h_percent, colors.upColor, colors.downColor]);
+  }, [stats?.latest_price, stats?.change_24h_percent]);
 
   return (
     <div className="relative w-full">
