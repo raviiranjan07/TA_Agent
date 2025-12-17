@@ -180,9 +180,21 @@ print("\n" + "="*70)
 print("📊 Step 2: Creating 3-Class Targets")
 print("="*70)
 
-# 1. Calculate Volatility
-df['returns'] = df['close'].pct_change()
-df['volatility'] = df['returns'].rolling(window=20).std()
+# 1. Use existing volatility from feature engineering (or calculate if missing)
+if 'volatility_20' in df.columns:
+    df['volatility'] = df['volatility_20']
+    print("  Using existing volatility_20 column")
+else:
+    if 'returns' not in df.columns:
+        df['returns'] = df['close'].pct_change()
+    df['volatility'] = df['returns'].rolling(window=20).std()
+    print("  Calculated new volatility column")
+
+# Drop rows where volatility is NaN (warm-up period)
+rows_before = len(df)
+df = df.dropna(subset=['volatility', 'close'])
+print(f"  Dropped {rows_before - len(df)} rows with NaN volatility")
+print(f"  Remaining rows: {len(df):,}")
 
 # 2. Define the NEW 3-Class Function
 def get_triple_barrier_label_3class(close_prices, volatility, t_events, pt=1, sl=1, min_ret=0.001, max_horizon=12):

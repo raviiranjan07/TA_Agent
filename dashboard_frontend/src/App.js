@@ -1,11 +1,10 @@
-import React from 'react';
 import { TradingProvider, useTradingContext } from './context/TradingContext';
 import { useTradingData, useWebSocket } from './hooks';
 import {
   Header,
   TimeframeBar,
   StatsBar,
-  CandlestickChart,
+  ChartContainer,
   Footer,
   ErrorBoundary,
 } from './components';
@@ -20,7 +19,7 @@ const DashboardContent = () => {
       <Header onRefresh={fetchData} isLoading={isLoading} />
       <TimeframeBar />
       <StatsBar />
-      <CandlestickChart />
+      <ChartContainer />
       <Footer />
     </div>
   );
