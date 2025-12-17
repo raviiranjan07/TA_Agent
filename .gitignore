@@ -1,0 +1,12 @@
+/logs
+.venv/
+.env
+
+*.pyc
+__pycache__/
+
+dashboard_frontend/node_modules/
+
+.DS_Store
+
+data/
