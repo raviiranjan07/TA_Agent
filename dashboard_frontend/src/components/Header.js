@@ -1,5 +1,4 @@
-import React from 'react';
-import { Activity, TrendingUp, TrendingDown, RefreshCw, Download, Moon, Sun, Maximize2 } from 'lucide-react';
+import { Activity, TrendingUp, TrendingDown, RefreshCw, Download, Moon, Sun, Maximize2, Clock } from 'lucide-react';
 import { useTradingContext, TRADING_PAIRS } from '../context/TradingContext';
 
 const Header = ({ onRefresh, isLoading }) => {
@@ -19,6 +18,31 @@ const Header = ({ onRefresh, isLoading }) => {
       document.documentElement.requestFullscreen();
     } else {
       document.exitFullscreen();
+    }
+  };
+
+  // Format price with proper decimals based on value
+  const formatPrice = (price) => {
+    if (!price) return '$0.00';
+    if (price >= 1000) return `$${price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    if (price >= 1) return `$${price.toFixed(2)}`;
+    return `$${price.toFixed(6)}`;
+  };
+
+  // Format last update time
+  const formatLastUpdate = (timeStr) => {
+    if (!timeStr) return '';
+    try {
+      const date = new Date(timeStr);
+      return date.toLocaleString('en-IN', {
+        timeZone: 'Asia/Kolkata',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false,
+      });
+    } catch {
+      return '';
     }
   };
 
@@ -53,12 +77,20 @@ const Header = ({ onRefresh, isLoading }) => {
           {stats && (
             <div className="flex items-center space-x-3 ml-4">
               <div>
-                <div className={`text-2xl font-bold ${theme.text}`}>
-                  ${stats.latest_price?.toFixed(2)}
+                <div className={`text-2xl font-bold font-mono ${theme.text}`}>
+                  {formatPrice(stats.latest_price)}
                 </div>
-                <div className={`text-xs ${stats.change_24h_percent >= 0 ? 'text-green-500' : 'text-red-500'}`}>
-                  {stats.change_24h_percent >= 0 ? '+' : ''}
-                  {stats.change_24h_value?.toFixed(2)} ({stats.change_24h_percent?.toFixed(2)}%)
+                <div className="flex items-center gap-2">
+                  <span className={`text-xs font-mono ${stats.change_24h_percent >= 0 ? 'text-green-500' : 'text-red-500'}`}>
+                    {stats.change_24h_percent >= 0 ? '+' : ''}
+                    {stats.change_24h_value?.toFixed(2)} ({stats.change_24h_percent?.toFixed(2)}%)
+                  </span>
+                  {stats.latest_time && (
+                    <span className={`text-xs ${theme.textSecondary} flex items-center gap-1`}>
+                      <Clock className="w-3 h-3" />
+                      {formatLastUpdate(stats.latest_time)}
+                    </span>
+                  )}
                 </div>
               </div>
               {stats.change_24h_percent >= 0 ? (

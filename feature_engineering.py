@@ -340,6 +340,8 @@ def calculate_adx(df, period=14):
     """
     ADX measures trend strength regardless of direction.
     > 25: Strong trend, < 20: Weak/no trend
+
+    FIXED: Proper index alignment using df.index
     """
     # Calculate +DM and -DM
     high_diff = df['high'].diff()
@@ -348,12 +350,16 @@ def calculate_adx(df, period=14):
     plus_dm = np.where((high_diff > low_diff) & (high_diff > 0), high_diff, 0)
     minus_dm = np.where((low_diff > high_diff) & (low_diff > 0), low_diff, 0)
 
+    # Convert to pandas Series with proper index alignment
+    plus_dm_series = pd.Series(plus_dm, index=df.index)
+    minus_dm_series = pd.Series(minus_dm, index=df.index)
+
     # Calculate ATR (already have tr)
     atr = df['tr'].rolling(window=period).mean()
 
-    # Calculate +DI and -DI
-    plus_di = 100 * pd.Series(plus_dm).rolling(window=period).mean() / (atr + 1e-10)
-    minus_di = 100 * pd.Series(minus_dm).rolling(window=period).mean() / (atr + 1e-10)
+    # Calculate +DI and -DI with proper index
+    plus_di = 100 * plus_dm_series.rolling(window=period).mean() / (atr + 1e-10)
+    minus_di = 100 * minus_dm_series.rolling(window=period).mean() / (atr + 1e-10)
 
     # Calculate DX and ADX
     dx = 100 * np.abs(plus_di - minus_di) / (plus_di + minus_di + 1e-10)
@@ -365,16 +371,32 @@ df['adx_14'], df['plus_di_14'], df['minus_di_14'] = calculate_adx(df, 14)
 df['adx_trend_strength'] = np.where(df['adx_14'] > 25, 1, 0)  # 1 = trending, 0 = ranging
 
 # -----------------------------------------------------------------------------
-# VWAP (Volume Weighted Average Price)
+# VWAP (Volume Weighted Average Price) - FIXED: Daily Reset
 # -----------------------------------------------------------------------------
-# Reset VWAP daily for crypto (24h sessions)
-df['vwap_cumsum_pv'] = (df['typical_price'] * df['volume']).cumsum()
-df['vwap_cumsum_v'] = df['volume'].cumsum()
-df['vwap'] = df['vwap_cumsum_pv'] / (df['vwap_cumsum_v'] + 1e-10)
-df['vwap_distance'] = (df['close'] - df['vwap']) / (df['vwap'] + 1e-10) * 100
+# VWAP must reset each day to avoid data leakage from cumulative sum
+def calculate_daily_vwap(df):
+    """
+    Calculate VWAP with daily reset (no data leakage).
+    VWAP = cumsum(price * volume) / cumsum(volume) per day
+    """
+    # Group by date and calculate cumulative within each day
+    df['date'] = df.index.date
 
-# Clean up intermediate columns
-df.drop(['vwap_cumsum_pv', 'vwap_cumsum_v'], axis=1, inplace=True)
+    # Calculate cumulative price*volume and volume per day
+    df['pv'] = df['typical_price'] * df['volume']
+    df['cumsum_pv'] = df.groupby('date')['pv'].cumsum()
+    df['cumsum_v'] = df.groupby('date')['volume'].cumsum()
+
+    # VWAP = cumulative price*volume / cumulative volume
+    vwap = df['cumsum_pv'] / (df['cumsum_v'] + 1e-10)
+
+    # Cleanup temp columns
+    df.drop(['date', 'pv', 'cumsum_pv', 'cumsum_v'], axis=1, inplace=True)
+
+    return vwap
+
+df['vwap'] = calculate_daily_vwap(df)
+df['vwap_distance'] = (df['close'] - df['vwap']) / (df['vwap'] + 1e-10) * 100
 
 # -----------------------------------------------------------------------------
 # Volatility Percentile (where is current vol in historical range)
