@@ -15,8 +15,36 @@ from sklearn.metrics import (
     accuracy_score, classification_report, confusion_matrix, ConfusionMatrixDisplay,
     mean_absolute_error, mean_squared_error, r2_score
 )
+import os
+from dotenv import load_dotenv
 import warnings
 warnings.filterwarnings('ignore')
+
+# =============================================================================
+# LOAD CONFIGURATION FROM .env
+# =============================================================================
+load_dotenv()
+
+# Model selection: "both", "rf", or "xgb"
+MODEL_TYPE = os.getenv('MODEL_TYPE', 'both').lower()
+
+# Random Forest hyperparameters
+RF_N_ESTIMATORS = int(os.getenv('RF_N_ESTIMATORS', 300))
+RF_MAX_DEPTH = int(os.getenv('RF_MAX_DEPTH', 6))
+RF_MIN_SAMPLES_SPLIT = int(os.getenv('RF_MIN_SAMPLES_SPLIT', 200))
+RF_MIN_SAMPLES_LEAF = int(os.getenv('RF_MIN_SAMPLES_LEAF', 50))
+
+# XGBoost hyperparameters
+XGB_N_ESTIMATORS = int(os.getenv('XGB_N_ESTIMATORS', 300))
+XGB_MAX_DEPTH = int(os.getenv('XGB_MAX_DEPTH', 4))
+XGB_LEARNING_RATE = float(os.getenv('XGB_LEARNING_RATE', 0.05))
+XGB_SUBSAMPLE = float(os.getenv('XGB_SUBSAMPLE', 0.8))
+XGB_COLSAMPLE_BYTREE = float(os.getenv('XGB_COLSAMPLE_BYTREE', 0.8))
+
+# Backtest configuration
+INITIAL_CAPITAL = float(os.getenv('INITIAL_CAPITAL', 10000))
+RISK_PER_TRADE = float(os.getenv('RISK_PER_TRADE', 0.02))
+TRADING_FEE = float(os.getenv('TRADING_FEE', 0.0005))
 
 print("="*70)
 print("STEP 4: FEATURE SELECTION & MACHINE LEARNING (FIXED)")
@@ -199,8 +227,9 @@ df['direction'] = get_triple_barrier_label_3class(
 # 4. Map -1 to 2 (sklearn needs positive integers: 0=Neutral, 1=Long, 2=Short)
 df['direction'] = df['direction'].replace({-1: 2})
 
-# Target 2: Regression
-df['price_change_pct'] = df['close'].shift(-5).pct_change(periods=5) * 100
+# Target 2: Regression (FIXED: correct future return calculation)
+# Calculate: "What % will price change in 5 candles from now?"
+df['price_change_pct'] = (df['close'].shift(-5) - df['close']) / df['close'] * 100
 
 df = df.dropna()
 
@@ -218,11 +247,17 @@ print("="*70)
 
 # Exclude non-feature columns AND problematic cumulative features
 exclude_cols = [
+    # Raw OHLCV data
     'open', 'high', 'low', 'close', 'volume', 'num_trades',
-    'price_change', 'price_change_pct', 'direction', 
-    'magnitude_pct', 'tr', 'typical_price', 
-    'obv', 'ad_line',  # Remove raw cumulative features (data leakage!)
-    'movement_category','returns','volatility'
+    # Target variables
+    'price_change', 'price_change_pct', 'direction',
+    # Intermediate/helper columns
+    'magnitude_pct', 'tr', 'typical_price',
+    'movement_category', 'returns', 'volatility',
+    # Cumulative features (potential data leakage)
+    'vwap',  # Uses cumsum across entire history
+    # Intermediate streak feature (keep consecutive_up/down instead)
+    'consecutive_streak',
 ]
 
 all_features = [col for col in df.columns if col not in exclude_cols]
@@ -346,46 +381,150 @@ X_test_final_scaled = scaler.transform(X_test_final)
 # STEP 4: MODEL TRAINING WITH PROPER REGULARIZATION
 # =============================================================================
 print("\n" + "="*70)
-print("🤖 Step 4: Model Training with Regularization")
+print("🤖 Step 4: Model Training")
 print("="*70)
+print(f"  Configuration: MODEL_TYPE = '{MODEL_TYPE}'")
 
-# Random Forest with PROPER regularization for large dataset
-classifier_model = RandomForestClassifier(
-    n_estimators=300,         # Sufficient for large data
-    max_depth=6,             # Prevent deep memorization
-    min_samples_split=200,    # Need 100 samples to split
-    min_samples_leaf=50,      # Need 50 samples per leaf
-    max_features='sqrt',      # Feature randomness
-    random_state=42,
-    class_weight='balanced_subsample',
-    n_jobs=-1
-)
+# Initialize variables
+rf_classifier = None
+xgb_classifier = None
+rf_train_acc = rf_test_acc = 0
+xgb_train_acc = xgb_test_acc = 0
+rf_pred_train = rf_pred_test = None
+xgb_pred_train = xgb_pred_test = None
 
-print("\nModel Configuration:")
-print(f"  • n_estimators: 300")
-print(f"  • max_depth: 6")
-print(f"  • min_samples_split: 100")
-print(f"  • min_samples_leaf: 100")
-print(f"  • max_features: 'sqrt'")
+# -----------------------------------------------------------------------------
+# 4A: RANDOM FOREST CLASSIFIER (if enabled)
+# -----------------------------------------------------------------------------
+if MODEL_TYPE in ['both', 'rf']:
+    print("\n" + "-"*70)
+    print("Training Random Forest Classifier...")
+    print(f"  Params: n_estimators={RF_N_ESTIMATORS}, max_depth={RF_MAX_DEPTH}")
+    print("-"*70)
 
-# Train
-print("\nTraining classifier...")
-classifier_model.fit(X_train_final_scaled, y_dir_train)
+    rf_classifier = RandomForestClassifier(
+        n_estimators=RF_N_ESTIMATORS,
+        max_depth=RF_MAX_DEPTH,
+        min_samples_split=RF_MIN_SAMPLES_SPLIT,
+        min_samples_leaf=RF_MIN_SAMPLES_LEAF,
+        max_features='sqrt',
+        random_state=42,
+        class_weight='balanced_subsample',
+        n_jobs=-1
+    )
 
-# Predict
-y_pred_train = classifier_model.predict(X_train_final_scaled)
-y_pred_test = classifier_model.predict(X_test_final_scaled)
+    rf_classifier.fit(X_train_final_scaled, y_dir_train)
 
-# Evaluate
-train_acc = accuracy_score(y_dir_train, y_pred_train)
-test_acc = accuracy_score(y_dir_test, y_pred_test)
+    rf_pred_train = rf_classifier.predict(X_train_final_scaled)
+    rf_pred_test = rf_classifier.predict(X_test_final_scaled)
 
-# Time Series Cross-Validation
+    rf_train_acc = accuracy_score(y_dir_train, rf_pred_train)
+    rf_test_acc = accuracy_score(y_dir_test, rf_pred_test)
+
+    print(f"  RF Train Accuracy: {rf_train_acc:.4f}")
+    print(f"  RF Test Accuracy:  {rf_test_acc:.4f}")
+    print(f"  RF Train/Test Gap: {(rf_train_acc - rf_test_acc)*100:.2f}%")
+else:
+    print("\n⏭️  Skipping Random Forest (MODEL_TYPE = 'xgb')")
+
+# -----------------------------------------------------------------------------
+# 4B: XGBOOST CLASSIFIER (if enabled)
+# -----------------------------------------------------------------------------
+if MODEL_TYPE in ['both', 'xgb']:
+    print("\n" + "-"*70)
+    print("Training XGBoost Classifier...")
+    print(f"  Params: n_estimators={XGB_N_ESTIMATORS}, max_depth={XGB_MAX_DEPTH}, lr={XGB_LEARNING_RATE}")
+    print("-"*70)
+
+    xgb_classifier = XGBClassifier(
+        n_estimators=XGB_N_ESTIMATORS,
+        max_depth=XGB_MAX_DEPTH,
+        learning_rate=XGB_LEARNING_RATE,
+        subsample=XGB_SUBSAMPLE,
+        colsample_bytree=XGB_COLSAMPLE_BYTREE,
+        reg_alpha=0.1,
+        reg_lambda=1.0,
+        random_state=42,
+        n_jobs=-1,
+        use_label_encoder=False,
+        eval_metric='mlogloss'
+    )
+
+    xgb_classifier.fit(X_train_final_scaled, y_dir_train)
+
+    xgb_pred_train = xgb_classifier.predict(X_train_final_scaled)
+    xgb_pred_test = xgb_classifier.predict(X_test_final_scaled)
+
+    xgb_train_acc = accuracy_score(y_dir_train, xgb_pred_train)
+    xgb_test_acc = accuracy_score(y_dir_test, xgb_pred_test)
+
+    print(f"  XGB Train Accuracy: {xgb_train_acc:.4f}")
+    print(f"  XGB Test Accuracy:  {xgb_test_acc:.4f}")
+    print(f"  XGB Train/Test Gap: {(xgb_train_acc - xgb_test_acc)*100:.2f}%")
+else:
+    print("\n⏭️  Skipping XGBoost (MODEL_TYPE = 'rf')")
+
+# -----------------------------------------------------------------------------
+# 4C: SELECT BEST MODEL
+# -----------------------------------------------------------------------------
+print("\n" + "-"*70)
+print("Model Selection")
+print("-"*70)
+
+if MODEL_TYPE == 'both':
+    print(f"\n{'Model':<15} | {'Train Acc':<12} | {'Test Acc':<12} | {'Overfit':<10}")
+    print("-" * 55)
+    print(f"{'Random Forest':<15} | {rf_train_acc:.4f}       | {rf_test_acc:.4f}       | {(rf_train_acc-rf_test_acc)*100:.2f}%")
+    print(f"{'XGBoost':<15} | {xgb_train_acc:.4f}       | {xgb_test_acc:.4f}       | {(xgb_train_acc-xgb_test_acc)*100:.2f}%")
+
+    # Select best model based on test accuracy with minimal overfitting
+    rf_score = rf_test_acc - abs(rf_train_acc - rf_test_acc) * 0.5  # Penalize overfitting
+    xgb_score = xgb_test_acc - abs(xgb_train_acc - xgb_test_acc) * 0.5
+
+    if xgb_score > rf_score:
+        classifier_model = xgb_classifier
+        y_pred_train = xgb_pred_train
+        y_pred_test = xgb_pred_test
+        train_acc = xgb_train_acc
+        test_acc = xgb_test_acc
+        best_model_name = "XGBoost"
+        print(f"\n🏆 Best Model: XGBoost (score: {xgb_score:.4f})")
+    else:
+        classifier_model = rf_classifier
+        y_pred_train = rf_pred_train
+        y_pred_test = rf_pred_test
+        train_acc = rf_train_acc
+        test_acc = rf_test_acc
+        best_model_name = "Random Forest"
+        print(f"\n🏆 Best Model: Random Forest (score: {rf_score:.4f})")
+
+elif MODEL_TYPE == 'rf':
+    classifier_model = rf_classifier
+    y_pred_train = rf_pred_train
+    y_pred_test = rf_pred_test
+    train_acc = rf_train_acc
+    test_acc = rf_test_acc
+    best_model_name = "Random Forest"
+    print(f"\n🏆 Selected Model: Random Forest (single model mode)")
+
+elif MODEL_TYPE == 'xgb':
+    classifier_model = xgb_classifier
+    y_pred_train = xgb_pred_train
+    y_pred_test = xgb_pred_test
+    train_acc = xgb_train_acc
+    test_acc = xgb_test_acc
+    best_model_name = "XGBoost"
+    print(f"\n🏆 Selected Model: XGBoost (single model mode)")
+
+else:
+    raise ValueError(f"Invalid MODEL_TYPE: '{MODEL_TYPE}'. Must be 'both', 'rf', or 'xgb'")
+
+# Time Series Cross-Validation on best model
 print("\nPerforming Time Series Cross-Validation...")
 tscv = TimeSeriesSplit(n_splits=5)
 cv_scores = cross_val_score(classifier_model, X_train_final_scaled, y_dir_train, cv=tscv, scoring='accuracy')
 
-print("\n📊 Classification Results:")
+print(f"\n📊 Best Model ({best_model_name}) Results:")
 print(f"  Train Accuracy: {train_acc:.4f}")
 print(f"  Test Accuracy:  {test_acc:.4f}")
 print(f"  Train/Test Gap: {(train_acc - test_acc)*100:.2f}%")
@@ -400,104 +539,118 @@ else:
     print("  ⚠️  Mild overfitting")
 
 # =============================================================================
-# STEP 5: DETAILED EVALUATION
-# =============================================================================
-# print("\n" + "="*70)
-# print("📊 Step 5: Detailed Classification Evaluation")
-# print("="*70)
-
-# # Classification Report
-# print("\n📋 Classification Report:")
-# print(classification_report(y_dir_test, y_pred_test, target_names=['DOWN', 'UP']))
-
-# # Confusion Matrix
-# cm = confusion_matrix(y_dir_test, y_pred_test)
-# print("\n📊 Confusion Matrix:")
-# print(f"                Predicted")
-# print(f"              DOWN    UP")
-# print(f"Actual DOWN   {cm[0,0]:<6}  {cm[0,1]:<6}")
-# print(f"       UP     {cm[1,0]:<6}  {cm[1,1]:<6}")
-
-# # Additional metrics
-# tn, fp, fn, tp = cm.ravel()
-# precision = tp / (tp + fp) if (tp + fp) > 0 else 0
-# recall = tp / (tp + fn) if (tp + fn) > 0 else 0
-# f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0
-
-# print(f"\n📈 Detailed Metrics:")
-# print(f"  Precision (UP): {precision:.4f}")
-# print(f"  Recall (UP):    {recall:.4f}")
-# print(f"  F1-Score (UP):  {f1:.4f}")
-
-
-# =============================================================================
-# STEP 5: PROBABILITY THRESHOLD OPTIMIZATION (MULTI-CLASS FIX)
+# STEP 5: DETAILED 3-CLASS EVALUATION
 # =============================================================================
 print("\n" + "="*70)
-print("📊 Step 5: Finding the 'Sweet Spot' (Long & Short Tuning)")
+print("📊 Step 5: Detailed 3-Class Evaluation")
+print("="*70)
+
+# Classification Report (3-Class)
+print("\n📋 Classification Report (3-Class):")
+print(classification_report(y_dir_test, y_pred_test,
+      target_names=['Neutral', 'Long', 'Short'], zero_division=0))
+
+# Confusion Matrix (3-Class)
+cm = confusion_matrix(y_dir_test, y_pred_test)
+print("📊 Confusion Matrix:")
+print(f"                    Predicted")
+print(f"               Neutral  Long  Short")
+for i, label in enumerate(['Neutral', 'Long   ', 'Short  ']):
+    row = "  ".join(f"{cm[i,j]:<6}" for j in range(min(3, cm.shape[1])))
+    print(f"Actual {label}  {row}")
+
+# Per-class metrics
+print(f"\n📈 Per-Class Accuracy:")
+for i, label in enumerate(['Neutral', 'Long', 'Short']):
+    if i < cm.shape[0]:
+        class_total = cm[i, :].sum()
+        class_correct = cm[i, i] if i < cm.shape[1] else 0
+        class_acc = class_correct / class_total if class_total > 0 else 0
+        print(f"  {label}: {class_acc*100:.1f}% ({class_correct}/{class_total})")
+
+
+# =============================================================================
+# STEP 5B: PROBABILITY THRESHOLD OPTIMIZATION (BALANCED FOR LONG & SHORT)
+# =============================================================================
+print("\n" + "="*70)
+print("📊 Step 5b: Threshold Optimization (Long & Short)")
 print("="*70)
 
 # Get probabilities for Class 1 (Long) and Class 2 (Short)
-# .predict_proba returns [Neutral, Long, Short]
 probs_long = classifier_model.predict_proba(X_test_final_scaled)[:, 1]
 probs_short = classifier_model.predict_proba(X_test_final_scaled)[:, 2]
 
 # Test thresholds
-thresholds = [0.35, 0.38, 0.40, 0.42, 0.45, 0.48,0.50, 0.52, 0.53, 0.54, 0.55, 0.56, 0.58, 0.60]
+thresholds = [0.35, 0.38, 0.40, 0.42, 0.45, 0.48, 0.50, 0.52, 0.55, 0.58, 0.60]
 
-print(f"{'Threshold':<10} | {'Long Win Rate':<15} | {'Long Trades':<12} | {'Short Win Rate':<15} | {'Short Trades':<12}")
+print(f"{'Threshold':<10} | {'Long Win%':<10} | {'Long #':<8} | {'Short Win%':<10} | {'Short #':<8} | {'Combined':<10}")
 print("-" * 75)
 
-best_threshold = 0.40
+best_threshold_long = 0.40
+best_threshold_short = 0.40
 best_long_precision = 0.0
+best_short_precision = 0.0
+best_combined_score = 0.0
+
+threshold_results = []
 
 for t in thresholds:
-    # ---------------------------------------------------------
-    # 1. Evaluate LONGS (Class 1)
-    # ---------------------------------------------------------
-    # We predict LONG if probability > t
+    # Evaluate LONGS
     long_signals = (probs_long >= t).astype(int)
-    
-    # Calculate Precision manually for Class 1
-    # True Positives: We predicted Long (1) AND Actual was Long (1)
     tp_long = ((long_signals == 1) & (y_dir_test == 1)).sum()
-    # False Positives: We predicted Long (1) BUT Actual was Neutral (0) or Short (2)
     fp_long = ((long_signals == 1) & (y_dir_test != 1)).sum()
-    
     long_prec = tp_long / (tp_long + fp_long) if (tp_long + fp_long) > 0 else 0
     long_count = tp_long + fp_long
 
-    # ---------------------------------------------------------
-    # 2. Evaluate SHORTS (Class 2)
-    # ---------------------------------------------------------
-    # We predict SHORT if probability > t
+    # Evaluate SHORTS
     short_signals = (probs_short >= t).astype(int)
-    
-    # Calculate Precision manually for Class 2
-    # True Positives: We predicted Short (1) AND Actual was Short (2)
     tp_short = ((short_signals == 1) & (y_dir_test == 2)).sum()
-    # False Positives: We predicted Short (1) BUT Actual was Neutral (0) or Long (1)
     fp_short = ((short_signals == 1) & (y_dir_test != 2)).sum()
-    
     short_prec = tp_short / (tp_short + fp_short) if (tp_short + fp_short) > 0 else 0
     short_count = tp_short + fp_short
 
-    print(f"{t:.2f}       | {long_prec*100:.2f}%          | {long_count:<12} | {short_prec*100:.2f}%          | {short_count:<12}")
+    # Combined score: weighted average of precision * sqrt(trade_count) for balance
+    long_score = long_prec * np.sqrt(long_count) if long_count > 20 else 0
+    short_score = short_prec * np.sqrt(short_count) if short_count > 20 else 0
+    combined = (long_score + short_score) / 2
 
-    # Logic to pick best threshold (prioritizing Long Win Rate > 50% with reasonable volume)
+    print(f"{t:.2f}       | {long_prec*100:>6.1f}%   | {long_count:<8} | {short_prec*100:>6.1f}%   | {short_count:<8} | {combined:.2f}")
+
+    threshold_results.append({
+        'threshold': t,
+        'long_prec': long_prec, 'long_count': long_count,
+        'short_prec': short_prec, 'short_count': short_count,
+        'combined': combined
+    })
+
+    # Track best for each
     if long_prec > best_long_precision and long_count > 50:
         best_long_precision = long_prec
+        best_threshold_long = t
+    if short_prec > best_short_precision and short_count > 50:
+        best_short_precision = short_prec
+        best_threshold_short = t
+    if combined > best_combined_score:
+        best_combined_score = combined
         best_threshold = t
 
 print("-" * 75)
-print(f"🏆 Optimal Threshold: {best_threshold}")
-print(f"   Expected Long Win Rate: {best_long_precision*100:.2f}%")
+print(f"🏆 Best Long Threshold:  {best_threshold_long} (Win Rate: {best_long_precision*100:.1f}%)")
+print(f"🏆 Best Short Threshold: {best_threshold_short} (Win Rate: {best_short_precision*100:.1f}%)")
+print(f"🏆 Best Combined:        {best_threshold}")
 
-# Save this threshold for your live bot
+# Save thresholds
 import json
+threshold_config = {
+    'threshold_long': best_threshold_long,
+    'threshold_short': best_threshold_short,
+    'threshold_combined': best_threshold,
+    'long_win_rate': best_long_precision,
+    'short_win_rate': best_short_precision
+}
 with open('models/threshold.json', 'w') as f:
-    json.dump({'threshold': best_threshold, 'win_rate': best_long_precision}, f)
-print("✅ Threshold saved to models/threshold.json")
+    json.dump(threshold_config, f, indent=2)
+print("✅ Thresholds saved to models/threshold.json")
 
 # =============================================================================
 # STEP 6: REGRESSION MODEL
@@ -594,40 +747,30 @@ else:
     print(f"\n  ⚠️  MODEL STATUS: NEEDS IMPROVEMENT")
     
 # =============================================================================
-# STEP 8: ADVANCED BACKTEST (HEDGE STRATEGY: LONG + SHORT + SMA FILTER)
+# STEP 8: ADVANCED BACKTEST WITH RISK METRICS & POSITION SIZING
 # =============================================================================
 print("\n" + "="*70)
-print("🎨 Step 8: Hedge Strategy Backtest (Fixed)")
+print("🎨 Step 8: Advanced Backtest (Risk Metrics + Position Sizing)")
 print("="*70)
 
 import matplotlib.pyplot as plt
-import seaborn as sns
 
 # -----------------------------------------------------------------------------
 # 1. CALCULATE TREND FILTER (True Daily SMA 200)
 # -----------------------------------------------------------------------------
 print("  Calculating Daily SMA 200 (Regime Filter)...")
 
-# Resample to Daily Candles to get the real 200-Day Moving Average
 daily_df = df.resample('1D').agg({'close': 'last'})
 daily_df['sma_200_daily'] = daily_df['close'].rolling(window=200).mean()
-
-# Map the Daily SMA back to the 5-minute data (forward fill)
-# This lets every 5m candle know what the daily trend is
 df['sma_200_daily'] = daily_df['sma_200_daily'].reindex(df.index, method='ffill')
 
 # -----------------------------------------------------------------------------
-# 2. PREPARE SIGNALS (LONG vs SHORT)
+# 2. PREPARE SIGNALS
 # -----------------------------------------------------------------------------
-# The model now outputs 3 probabilities: [Neutral, Long, Short]
 probs = classifier_model.predict_proba(X_test_final_scaled)
-probs_long = probs[:, 1]   # Probability of Class 1 (UP)
-probs_short = probs[:, 2]  # Probability of Class 2 (DOWN)
+probs_long = probs[:, 1]
+probs_short = probs[:, 2]
 
-# -----------------------------------------------------------------------------
-# 3. ALIGN DATA FOR BACKTEST
-# -----------------------------------------------------------------------------
-# Align everything to the Test Set indices
 test_indices = X_test.index
 closes = df.loc[test_indices, 'close'].values
 vols = df.loc[test_indices, 'volatility'].values
@@ -635,119 +778,251 @@ sma_200 = df.loc[test_indices, 'sma_200_daily'].values
 dates = test_indices
 
 # -----------------------------------------------------------------------------
-# 4. RUN SIMULATION
+# 3. BACKTEST WITH POSITION SIZING
 # -----------------------------------------------------------------------------
-# Settings
-try:
-    optimal_threshold = best_threshold
-except NameError:
-    optimal_threshold = 0.40 
+# Use separate thresholds for Long and Short
+threshold_long = best_threshold_long
+threshold_short = best_threshold_short
 
-print(f"  Using Dynamic Threshold: {optimal_threshold}")
+print(f"  Long Threshold:  {threshold_long}")
+print(f"  Short Threshold: {threshold_short}")
 
-capital = 10000.0
+# Position sizing parameters (loaded from .env)
+print(f"  Initial Capital: ${INITIAL_CAPITAL:,.2f}")
+print(f"  Risk Per Trade:  {RISK_PER_TRADE*100:.1f}%")
+print(f"  Trading Fee:     {TRADING_FEE*100:.3f}%")
+
+capital = INITIAL_CAPITAL
 equity_curve = [capital]
 trade_log = []
+long_trades = []
+short_trades = []
+
 in_trade = False
-side = None       # 'LONG' or 'SHORT'
+side = None
 entry_price = 0
+position_size = 0
 exit_candle = 0
 
-print(f"  Simulating Hedge Bot (Threshold {optimal_threshold})...")
+print(f"  Simulating with 2% Risk Per Trade...")
 
 for i in range(len(closes) - 13):
     if not in_trade:
-        equity_curve.append(equity_curve[-1])
-        
-        # --- TREND FILTER ---
-        # If SMA is NaN (start of data), assume Neutral (False)
+        equity_curve.append(capital)
+
         is_uptrend = closes[i] > sma_200[i] if not np.isnan(sma_200[i]) else False
-        
-        # ENTRY LOGIC: LONG (Signal + Bull Market)
-        if probs_long[i] >= optimal_threshold and is_uptrend:
+
+        # LONG ENTRY
+        if probs_long[i] >= threshold_long and is_uptrend:
             in_trade = True
             side = 'LONG'
             entry_price = closes[i]
-            vol = vols[i]
-            take_profit = entry_price * (1 + vol)
+            vol = max(vols[i], 0.001)  # Minimum volatility
+
+            # Position sizing: Risk 2% of capital
+            stop_distance = entry_price * vol
+            position_size = (capital * RISK_PER_TRADE) / stop_distance
+            position_value = position_size * entry_price
+
+            take_profit = entry_price * (1 + vol * 1.5)  # 1.5:1 R:R
             stop_loss = entry_price * (1 - vol)
             exit_candle = i + 12
-            capital *= 0.9995 # Entry Fee
 
-        # ENTRY LOGIC: SHORT (Signal + Bear Market)
-        elif probs_short[i] >= optimal_threshold and not is_uptrend:
+            # Entry fee
+            capital -= position_value * TRADING_FEE
+
+        # SHORT ENTRY
+        elif probs_short[i] >= threshold_short and not is_uptrend:
             in_trade = True
             side = 'SHORT'
             entry_price = closes[i]
-            vol = vols[i]
-            # Short Logic: Profit if price DROPS
-            take_profit = entry_price * (1 - vol) 
+            vol = max(vols[i], 0.001)
+
+            stop_distance = entry_price * vol
+            position_size = (capital * RISK_PER_TRADE) / stop_distance
+            position_value = position_size * entry_price
+
+            take_profit = entry_price * (1 - vol * 1.5)
             stop_loss = entry_price * (1 + vol)
             exit_candle = i + 12
-            capital *= 0.9995 # Entry Fee
-            
+
+            capital -= position_value * TRADING_FEE
+
     else:
-        # MANAGE TRADE
         current_price = closes[i]
         time_out = i >= exit_candle
-        
-        # Exit Logic for LONG
+
         if side == 'LONG':
             hit_tp = current_price >= take_profit
             hit_sl = current_price <= stop_loss
-            
+
             if hit_tp or hit_sl or time_out:
-                change_pct = (current_price - entry_price) / entry_price
-                capital *= (1 + change_pct)
-                capital *= 0.9995 # Exit Fee
+                pnl = (current_price - entry_price) * position_size
+                capital += pnl
+                capital -= abs(pnl) * TRADING_FEE  # Exit fee
+
+                trade_return = (current_price - entry_price) / entry_price
+                trade_log.append(trade_return)
+                long_trades.append(trade_return)
                 in_trade = False
-                trade_log.append(change_pct)
-                
-        # Exit Logic for SHORT
+
         elif side == 'SHORT':
-            hit_tp = current_price <= take_profit # Price went DOWN (Good)
-            hit_sl = current_price >= stop_loss   # Price went UP (Bad)
-            
+            hit_tp = current_price <= take_profit
+            hit_sl = current_price >= stop_loss
+
             if hit_tp or hit_sl or time_out:
-                # Short Profit formula is reversed
-                change_pct = (entry_price - current_price) / entry_price
-                capital *= (1 + change_pct)
-                capital *= 0.9995 # Exit Fee
+                pnl = (entry_price - current_price) * position_size
+                capital += pnl
+                capital -= abs(pnl) * TRADING_FEE
+
+                trade_return = (entry_price - current_price) / entry_price
+                trade_log.append(trade_return)
+                short_trades.append(trade_return)
                 in_trade = False
-                trade_log.append(change_pct)
-        
+
         equity_curve.append(capital)
+
+# -----------------------------------------------------------------------------
+# 4. CALCULATE RISK METRICS
+# -----------------------------------------------------------------------------
+print("\n" + "-"*70)
+print("Risk Metrics Calculation")
+print("-"*70)
+
+equity_array = np.array(equity_curve)
+returns_array = np.diff(equity_array) / equity_array[:-1]
+
+# Total Return
+total_return = (equity_curve[-1] - INITIAL_CAPITAL) / INITIAL_CAPITAL * 100
+
+# Sharpe Ratio (annualized, assuming 15-min candles = 35040 per year)
+if len(returns_array) > 0 and np.std(returns_array) > 0:
+    sharpe_ratio = np.mean(returns_array) / np.std(returns_array) * np.sqrt(35040)
+else:
+    sharpe_ratio = 0
+
+# Max Drawdown
+rolling_max = np.maximum.accumulate(equity_array)
+drawdowns = (equity_array - rolling_max) / rolling_max
+max_drawdown = np.min(drawdowns) * 100
+
+# Calmar Ratio (annualized return / max drawdown)
+annualized_return = total_return * (35040 / len(equity_curve)) if len(equity_curve) > 0 else 0
+calmar_ratio = abs(annualized_return / max_drawdown) if max_drawdown != 0 else 0
+
+# Win Rate
+total_trades = len(trade_log)
+winning_trades = len([x for x in trade_log if x > 0])
+win_rate = winning_trades / total_trades * 100 if total_trades > 0 else 0
+
+# Profit Factor
+gross_profit = sum([x for x in trade_log if x > 0])
+gross_loss = abs(sum([x for x in trade_log if x < 0]))
+profit_factor = gross_profit / gross_loss if gross_loss > 0 else float('inf')
+
+# Average Win / Average Loss
+avg_win = np.mean([x for x in trade_log if x > 0]) * 100 if winning_trades > 0 else 0
+avg_loss = np.mean([x for x in trade_log if x < 0]) * 100 if (total_trades - winning_trades) > 0 else 0
+
+# Long vs Short breakdown
+long_wins = len([x for x in long_trades if x > 0])
+short_wins = len([x for x in short_trades if x > 0])
+long_wr = long_wins / len(long_trades) * 100 if len(long_trades) > 0 else 0
+short_wr = short_wins / len(short_trades) * 100 if len(short_trades) > 0 else 0
 
 # -----------------------------------------------------------------------------
 # 5. VISUALIZATION
 # -----------------------------------------------------------------------------
-equity_df = pd.DataFrame({'Equity': equity_curve}, index=dates[:len(equity_curve)])
+fig, axes = plt.subplots(2, 2, figsize=(14, 10))
 
-# Chart 1: Hedge Equity Curve
-plt.figure(figsize=(12, 6))
-market_norm = (closes[:len(equity_curve)] / closes[0]) * 10000
-plt.plot(equity_df.index, market_norm, label='Market (Buy & Hold)', color='gray', alpha=0.5)
-plt.plot(equity_df.index, equity_df['Equity'], label='Hedge Strategy (Long/Short)', color='blue', linewidth=2)
-plt.title(f'Hedge Bot Performance (Threshold {optimal_threshold})')
-plt.ylabel('Capital ($)')
-plt.legend()
-plt.grid(True, alpha=0.3)
-plt.savefig('models/hedge_equity_curve.png')
-print("✅ Visualization Saved: models/hedge_equity_curve.png")
+# Chart 1: Equity Curve
+ax1 = axes[0, 0]
+market_norm = (closes[:len(equity_curve)] / closes[0]) * INITIAL_CAPITAL
+ax1.plot(dates[:len(equity_curve)], market_norm, label='Buy & Hold', color='gray', alpha=0.5)
+ax1.plot(dates[:len(equity_curve)], equity_curve, label='Strategy', color='blue', linewidth=2)
+ax1.axhline(y=INITIAL_CAPITAL, color='black', linestyle='--', alpha=0.3)
+ax1.set_title('Equity Curve')
+ax1.set_ylabel('Capital ($)')
+ax1.legend()
+ax1.grid(True, alpha=0.3)
 
-# Chart 2: Win Rate Analysis (Optional but useful)
-# We calculate win rate for Longs and Shorts combined
-total_trades = len(trade_log)
-if total_trades > 0:
-    winning_trades = len([x for x in trade_log if x > 0])
-    win_rate = winning_trades / total_trades
-else:
-    win_rate = 0
+# Chart 2: Drawdown
+ax2 = axes[0, 1]
+ax2.fill_between(dates[:len(drawdowns)], drawdowns * 100, 0, color='red', alpha=0.3)
+ax2.set_title('Drawdown (%)')
+ax2.set_ylabel('Drawdown %')
+ax2.grid(True, alpha=0.3)
 
+# Chart 3: Trade Returns Distribution
+ax3 = axes[1, 0]
+if len(trade_log) > 0:
+    ax3.hist([x * 100 for x in trade_log], bins=30, edgecolor='black', alpha=0.7)
+    ax3.axvline(x=0, color='red', linestyle='--')
+ax3.set_title('Trade Returns Distribution')
+ax3.set_xlabel('Return (%)')
+ax3.set_ylabel('Frequency')
+
+# Chart 4: Cumulative Returns
+ax4 = axes[1, 1]
+cumulative_returns = np.cumprod(1 + np.array(trade_log)) - 1 if len(trade_log) > 0 else [0]
+ax4.plot(cumulative_returns * 100)
+ax4.set_title('Cumulative Trade Returns')
+ax4.set_xlabel('Trade #')
+ax4.set_ylabel('Cumulative Return (%)')
+ax4.grid(True, alpha=0.3)
+
+plt.tight_layout()
+plt.savefig('models/backtest_analysis.png', dpi=150)
+print("✅ Visualization Saved: models/backtest_analysis.png")
+
+# Feature Importance Chart
+plt.figure(figsize=(10, 8))
+importance_df = pd.DataFrame({
+    'feature': final_features,
+    'importance': classifier_model.feature_importances_
+}).sort_values('importance', ascending=True).tail(20)
+
+plt.barh(importance_df['feature'], importance_df['importance'])
+plt.title('Top 20 Feature Importance')
+plt.xlabel('Importance')
+plt.tight_layout()
+plt.savefig('models/feature_importance.png', dpi=150)
+print("✅ Feature Importance Saved: models/feature_importance.png")
+
+# -----------------------------------------------------------------------------
+# 6. FINAL REPORT
+# -----------------------------------------------------------------------------
 print("\n" + "="*70)
-print("🚀 FINAL VERDICT (HEDGE BOT)")
+print("🚀 BACKTEST RESULTS")
 print("="*70)
-print(f"Final Capital:   ${equity_curve[-1]:.2f}")
-print(f"Total Trades:    {total_trades}")
-print(f"Overall Win Rate: {win_rate*100:.2f}%")
-print(f"Avg Profit:      {sum(trade_log)/len(trade_log)*100 if len(trade_log)>0 else 0:.2f}% per trade")
+
+print(f"\n📈 PERFORMANCE METRICS:")
+print(f"  Initial Capital:    ${INITIAL_CAPITAL:,.2f}")
+print(f"  Final Capital:      ${equity_curve[-1]:,.2f}")
+print(f"  Total Return:       {total_return:+.2f}%")
+print(f"  Annualized Return:  {annualized_return:+.2f}%")
+
+print(f"\n📊 RISK METRICS:")
+print(f"  Sharpe Ratio:       {sharpe_ratio:.2f}")
+print(f"  Max Drawdown:       {max_drawdown:.2f}%")
+print(f"  Calmar Ratio:       {calmar_ratio:.2f}")
+
+print(f"\n🎯 TRADE STATISTICS:")
+print(f"  Total Trades:       {total_trades}")
+print(f"  Win Rate:           {win_rate:.1f}%")
+print(f"  Profit Factor:      {profit_factor:.2f}")
+print(f"  Avg Win:            {avg_win:+.2f}%")
+print(f"  Avg Loss:           {avg_loss:+.2f}%")
+
+print(f"\n📋 LONG vs SHORT:")
+print(f"  Long Trades:        {len(long_trades)} (Win Rate: {long_wr:.1f}%)")
+print(f"  Short Trades:       {len(short_trades)} (Win Rate: {short_wr:.1f}%)")
+
+# Quality Assessment
+print("\n" + "-"*70)
+if sharpe_ratio > 1.0 and max_drawdown > -20 and win_rate > 50:
+    print("✅ STRATEGY STATUS: PRODUCTION READY")
+elif sharpe_ratio > 0.5 and max_drawdown > -30:
+    print("⚠️  STRATEGY STATUS: ACCEPTABLE (needs monitoring)")
+else:
+    print("❌ STRATEGY STATUS: NEEDS IMPROVEMENT")

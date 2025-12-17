@@ -6,17 +6,21 @@ Create diverse features for better prediction
 import pandas as pd
 import numpy as np
 from sqlalchemy import create_engine
-import matplotlib.pyplot as plt
-import seaborn as sns
+import os
+from dotenv import load_dotenv
 import warnings
 warnings.filterwarnings('ignore')
+
+# Load environment variables
+load_dotenv()
 
 print("="*70)
 print("STEP 3: ENHANCED FEATURE ENGINEERING")
 print("="*70)
 
-# Connect and load data
-engine = create_engine('postgresql://raviranjan@localhost/crypto_data')
+# Connect and load data using environment variable
+DATABASE_URL = os.getenv('DATABASE_URL', 'postgresql://localhost/crypto_data')
+engine = create_engine(DATABASE_URL)
 
 print("\n📥 Loading data...")
 query = """
@@ -41,17 +45,17 @@ df.set_index('time', inplace=True)
 
 print(f"✅ Loaded {len(df):,} rows of 1-minute data")
 
-#=============================================================================
-# [INSERT THIS BLOCK HERE] RESAMPLE TO 5-MINUTE TIMEFRAME
 # =============================================================================
-print("\n🔄 Resampling to 5-Minute Candles...")
+# RESAMPLE TO 15-MINUTE TIMEFRAME
+# =============================================================================
+print("\n🔄 Resampling to 15-Minute Candles...")
 
 # Define how to aggregate each column
 aggregation_rules = {
-    'open': 'first',    # First price of the 5 mins
-    'high': 'max',      # Highest price during the 5 mins
-    'low': 'min',       # Lowest price during the 5 mins
-    'close': 'last',    # Last price of the 5 mins
+    'open': 'first',    # First price of the 15 mins
+    'high': 'max',      # Highest price during the 15 mins
+    'low': 'min',       # Lowest price during the 15 mins
+    'close': 'last',    # Last price of the 15 mins
     'volume': 'sum',    # Total volume
     'num_trades': 'sum' # Total trades
 }
@@ -60,7 +64,7 @@ aggregation_rules = {
 df = df.resample('15T').agg(aggregation_rules)
 df.dropna(inplace=True)
 
-print(f"✅ Resampled to {len(df):,} rows of 5-minute data\n")
+print(f"✅ Resampled to {len(df):,} rows of 15-minute data\n")
 # =============================================================================
 
 # =============================================================================
@@ -76,11 +80,11 @@ df['log_returns'] = np.log(df['close'] / df['close'].shift(1))
 
 # Price range
 df['price_range'] = df['high'] - df['low']
-df['price_range_pct'] = (df['high'] - df['low']) / df['close'] * 100
+df['price_range_pct'] = (df['high'] - df['low']) / (df['close'] + 1e-10) * 100
 
 # Body size
 df['body'] = df['close'] - df['open']
-df['body_pct'] = (df['close'] - df['open']) / df['open'] * 100
+df['body_pct'] = (df['close'] - df['open']) / (df['open'] + 1e-10) * 100
 
 # Shadows
 df['upper_shadow'] = df['high'] - df[['open', 'close']].max(axis=1)
@@ -122,11 +126,6 @@ df['sma_50_slope'] = df['sma_50'].diff(5)
 df['sma_200_slope'] = df['sma_200'].diff(10)
 
 print("✅ Moving averages (20 features)")
-
-print("   Calculing 15m Indicators...")
-df['sma_20'] = df['close'].rolling(window=20).mean()
-df['sma_50'] = df['close'].rolling(window=50).mean()
-df['sma_200'] = df['close'].rolling(window=200).mean()
 
 # --- NEW: ADD HIGHER TIMEFRAME CONTEXT (THE X-RAY VISION) ---
 print("   Adding 1-Hour and 4-Hour Context...")
@@ -183,18 +182,25 @@ df['avg_trade_size'] = df['volume'] / (df['num_trades'] + 1e-10)
 # NEW: Volume Rate of Change
 df['volume_roc'] = df['volume'].pct_change(10)
 
-# NEW: On-Balance Volume (OBV)
-df['obv'] = (np.sign(df['returns']) * df['volume']).fillna(0).cumsum()
-df['obv_sma'] = df['obv'].rolling(window=20).mean()
-df['obv_divergence'] = (df['obv'] - df['obv_sma']) / (df['obv_sma'] + 1e-10)
+# NEW: On-Balance Volume (OBV) - Using rolling sum to avoid data leakage
+# Instead of cumsum (which uses ALL historical data), use rolling window
+obv_raw = (np.sign(df['returns']) * df['volume']).fillna(0)
+df['obv_20'] = obv_raw.rolling(window=20).sum()  # Rolling OBV
+df['obv_50'] = obv_raw.rolling(window=50).sum()
+df['obv_divergence'] = (df['obv_20'] - df['obv_50']) / (df['obv_50'].abs() + 1e-10)
 
 # NEW: Force Index
 df['force_index'] = df['returns'] * df['volume']
 df['force_index_ema'] = df['force_index'].ewm(span=13).mean()
 
-# NEW: Accumulation/Distribution Line
-df['ad_line'] = ((df['close'] - df['low']) - (df['high'] - df['close'])) / (df['high'] - df['low'] + 1e-10) * df['volume']
-df['ad_line'] = df['ad_line'].fillna(0).cumsum()
+# NEW: Accumulation/Distribution (AD) - Using rolling sum to avoid data leakage
+ad_raw = ((df['close'] - df['low']) - (df['high'] - df['close'])) / (df['high'] - df['low'] + 1e-10) * df['volume']
+df['ad_20'] = ad_raw.rolling(window=20).sum()  # Rolling AD
+df['ad_50'] = ad_raw.rolling(window=50).sum()
+df['ad_oscillator'] = df['ad_20'] - df['ad_50']  # AD Oscillator (momentum of money flow)
+
+# NEW: Chaikin Money Flow (CMF) - Better than raw AD for crypto
+df['cmf_20'] = ad_raw.rolling(window=20).sum() / (df['volume'].rolling(window=20).sum() + 1e-10)
 
 print("✅ Volume features (15 features)")
 
@@ -261,6 +267,10 @@ df['macd'] = df['ema_12'] - df['ema_26']
 df['macd_signal'] = df['macd'].ewm(span=9, adjust=False).mean()
 df['macd_histogram'] = df['macd'] - df['macd_signal']
 
+# NEW: MACD Histogram Momentum (acceleration of MACD)
+df['macd_hist_momentum'] = df['macd_histogram'].diff()
+df['macd_hist_acceleration'] = df['macd_hist_momentum'].diff()
+
 # Rate of Change
 df['roc_10'] = ((df['close'] - df['close'].shift(10)) / (df['close'].shift(10) + 1e-10)) * 100
 df['roc_20'] = ((df['close'] - df['close'].shift(20)) / (df['close'].shift(20) + 1e-10)) * 100
@@ -317,10 +327,120 @@ df['cci_20'] = calculate_cci(df, 20)
 print("✅ Momentum indicators (18 features)")
 
 # =============================================================================
-# CATEGORY 6: TIME-BASED FEATURES
+# CATEGORY 6: ADVANCED INDICATORS (NEW!)
 # =============================================================================
 print("\n" + "="*70)
-print("CATEGORY 6: Time-Based Features")
+print("CATEGORY 6: Advanced Indicators (NEW!)")
+print("="*70)
+
+# -----------------------------------------------------------------------------
+# ADX (Average Directional Index) - Measures trend strength (0-100)
+# -----------------------------------------------------------------------------
+def calculate_adx(df, period=14):
+    """
+    ADX measures trend strength regardless of direction.
+    > 25: Strong trend, < 20: Weak/no trend
+    """
+    # Calculate +DM and -DM
+    high_diff = df['high'].diff()
+    low_diff = -df['low'].diff()
+
+    plus_dm = np.where((high_diff > low_diff) & (high_diff > 0), high_diff, 0)
+    minus_dm = np.where((low_diff > high_diff) & (low_diff > 0), low_diff, 0)
+
+    # Calculate ATR (already have tr)
+    atr = df['tr'].rolling(window=period).mean()
+
+    # Calculate +DI and -DI
+    plus_di = 100 * pd.Series(plus_dm).rolling(window=period).mean() / (atr + 1e-10)
+    minus_di = 100 * pd.Series(minus_dm).rolling(window=period).mean() / (atr + 1e-10)
+
+    # Calculate DX and ADX
+    dx = 100 * np.abs(plus_di - minus_di) / (plus_di + minus_di + 1e-10)
+    adx = dx.rolling(window=period).mean()
+
+    return adx, plus_di, minus_di
+
+df['adx_14'], df['plus_di_14'], df['minus_di_14'] = calculate_adx(df, 14)
+df['adx_trend_strength'] = np.where(df['adx_14'] > 25, 1, 0)  # 1 = trending, 0 = ranging
+
+# -----------------------------------------------------------------------------
+# VWAP (Volume Weighted Average Price)
+# -----------------------------------------------------------------------------
+# Reset VWAP daily for crypto (24h sessions)
+df['vwap_cumsum_pv'] = (df['typical_price'] * df['volume']).cumsum()
+df['vwap_cumsum_v'] = df['volume'].cumsum()
+df['vwap'] = df['vwap_cumsum_pv'] / (df['vwap_cumsum_v'] + 1e-10)
+df['vwap_distance'] = (df['close'] - df['vwap']) / (df['vwap'] + 1e-10) * 100
+
+# Clean up intermediate columns
+df.drop(['vwap_cumsum_pv', 'vwap_cumsum_v'], axis=1, inplace=True)
+
+# -----------------------------------------------------------------------------
+# Volatility Percentile (where is current vol in historical range)
+# -----------------------------------------------------------------------------
+df['vol_percentile'] = df['volatility_20'].rolling(window=100).apply(
+    lambda x: (x.iloc[-1] >= x).mean() * 100 if len(x) > 0 else 50, raw=False
+)
+df['vol_regime'] = pd.cut(df['vol_percentile'], bins=[0, 25, 75, 100], labels=[0, 1, 2])
+df['vol_regime'] = df['vol_regime'].astype(float)  # 0=low vol, 1=normal, 2=high vol
+
+# Volatility direction (increasing or decreasing)
+df['vol_trend'] = np.sign(df['volatility_20'].diff(5))
+
+# -----------------------------------------------------------------------------
+# RSI Divergence Detection
+# -----------------------------------------------------------------------------
+def detect_divergence(price_series, indicator_series, window=14):
+    """
+    Detect bullish/bearish divergences.
+    Bullish: Price makes lower low, but indicator makes higher low
+    Bearish: Price makes higher high, but indicator makes lower high
+    """
+    price_roll_min = price_series.rolling(window).min()
+    price_roll_max = price_series.rolling(window).max()
+    ind_roll_min = indicator_series.rolling(window).min()
+    ind_roll_max = indicator_series.rolling(window).max()
+
+    # Bearish divergence: price at new high, indicator not
+    bearish_div = ((price_series >= price_roll_max.shift(1)) &
+                   (indicator_series < ind_roll_max.shift(1))).astype(int)
+
+    # Bullish divergence: price at new low, indicator not
+    bullish_div = ((price_series <= price_roll_min.shift(1)) &
+                   (indicator_series > ind_roll_min.shift(1))).astype(int)
+
+    return bullish_div, bearish_div
+
+df['rsi_bullish_div'], df['rsi_bearish_div'] = detect_divergence(df['close'], df['rsi_14'], 14)
+df['macd_bullish_div'], df['macd_bearish_div'] = detect_divergence(df['close'], df['macd'], 14)
+
+# -----------------------------------------------------------------------------
+# Returns Distribution Features (Skewness & Kurtosis)
+# -----------------------------------------------------------------------------
+df['returns_skew_20'] = df['returns'].rolling(window=20).skew()
+df['returns_kurtosis_20'] = df['returns'].rolling(window=20).kurt()
+
+# Skewness interpretation: positive = right tail (potential for large up moves)
+# Kurtosis interpretation: high = fat tails (extreme moves more likely)
+
+# -----------------------------------------------------------------------------
+# Normalized Momentum (momentum relative to volatility)
+# -----------------------------------------------------------------------------
+df['momentum_norm_10'] = df['momentum_10'] / (df['atr_14'] + 1e-10)
+df['momentum_norm_20'] = df['momentum_20'] / (df['atr_14'] + 1e-10)
+
+# Momentum magnitude (absolute value)
+df['momentum_10_abs'] = np.abs(df['momentum_10'])
+df['momentum_accel'] = df['momentum_10'].diff()  # Momentum acceleration
+
+print("✅ Advanced indicators (20 features)")
+
+# =============================================================================
+# CATEGORY 7: TIME-BASED FEATURES
+# =============================================================================
+print("\n" + "="*70)
+print("CATEGORY 7: Time-Based Features")
 print("="*70)
 
 df['hour'] = df.index.hour
@@ -372,10 +492,28 @@ print("="*70)
 df['higher_high'] = (df['high'] > df['high'].shift(1)).astype(int)
 df['lower_low'] = (df['low'] < df['low'].shift(1)).astype(int)
 
-# Consecutive up/down days
-df['consecutive_up'] = (df['close'] > df['close'].shift(1)).astype(int)
-for i in range(2, 6):
-    df['consecutive_up'] = df['consecutive_up'] * (df['close'].shift(i-1) > df['close'].shift(i)).astype(int) + df['consecutive_up']
+# Consecutive up/down candles (FIXED: proper streak counting)
+def count_consecutive_streak(returns_series):
+    """Count consecutive up or down candles"""
+    streak = []
+    current_streak = 0
+    for ret in returns_series:
+        if pd.isna(ret):
+            streak.append(0)
+        elif ret > 0:
+            current_streak = current_streak + 1 if current_streak > 0 else 1
+            streak.append(current_streak)
+        elif ret < 0:
+            current_streak = current_streak - 1 if current_streak < 0 else -1
+            streak.append(current_streak)
+        else:
+            current_streak = 0
+            streak.append(0)
+    return streak
+
+df['consecutive_streak'] = count_consecutive_streak(df['returns'])
+df['consecutive_up'] = (df['consecutive_streak'] > 0).astype(int) * df['consecutive_streak']
+df['consecutive_down'] = (df['consecutive_streak'] < 0).astype(int) * abs(df['consecutive_streak'])
 
 # Gap detection
 df['gap_up'] = ((df['open'] > df['close'].shift(1)) & (df['open'] - df['close'].shift(1) > df['atr_14'] * 0.5)).astype(int)
@@ -387,7 +525,7 @@ df['is_doji'] = (np.abs(df['body']) / (df['price_range'] + 1e-10) < 0.1).astype(
 print("✅ Pattern features (6 features)")
 
 # =============================================================================
-# SUMMARY
+# SUMMARY & DATA VALIDATION
 # =============================================================================
 print("\n" + "="*70)
 print("ENHANCED FEATURE ENGINEERING COMPLETE!")
@@ -400,16 +538,17 @@ print(f"\n📊 Original columns: {len(original_cols)}")
 print(f"📊 New features created: {len(feature_cols)}")
 print(f"📊 Total columns: {len(df.columns)}")
 
-# Feature breakdown
+# Feature breakdown (updated with new categories)
 categories = {
     'Basic Price': 10,
     'Moving Averages': 20,
-    'Volume': 15,
+    'Volume': 17,          # Updated: OBV rolling, AD rolling, CMF
     'Volatility': 15,
-    'Momentum': 18,
+    'Momentum': 20,        # Updated: MACD momentum/acceleration
+    'Advanced': 20,        # NEW: ADX, VWAP, divergence, skew/kurtosis
     'Time-Based': 11,
     'Lag': 9,
-    'Pattern': 6
+    'Pattern': 8           # Updated: consecutive_down, consecutive_streak
 }
 
 print("\n📋 Feature Breakdown:")
@@ -417,10 +556,36 @@ for cat, count in categories.items():
     print(f"  • {cat:20s}: {count:3d} features")
 print(f"  {'TOTAL':20s}: {sum(categories.values()):3d} features")
 
+# -----------------------------------------------------------------------------
+# DATA VALIDATION (Critical for ML pipeline)
+# -----------------------------------------------------------------------------
+print("\n" + "-"*70)
+print("DATA VALIDATION")
+print("-"*70)
+
 # Check for missing values
-print(f"\n⚠️  Missing values per column (top 10):")
 missing = df.isnull().sum()
-print(missing[missing > 0].sort_values(ascending=False).head(10))
+missing_cols = missing[missing > 0].sort_values(ascending=False)
+print(f"\n⚠️  Columns with missing values: {len(missing_cols)}")
+if len(missing_cols) > 0:
+    print(missing_cols.head(10))
+
+# Check for infinity values
+inf_count = np.isinf(df.select_dtypes(include=[np.number])).sum()
+inf_cols = inf_count[inf_count > 0]
+print(f"\n⚠️  Columns with infinity values: {len(inf_cols)}")
+if len(inf_cols) > 0:
+    print(inf_cols)
+
+# Replace infinity with NaN for cleaner export
+df.replace([np.inf, -np.inf], np.nan, inplace=True)
+print("✅ Replaced infinity values with NaN")
+
+# Final row count after warm-up period
+rows_before = len(df)
+df_clean = df.dropna()
+rows_after = len(df_clean)
+print(f"\n📈 Usable rows after warm-up: {rows_after:,} ({rows_after/rows_before*100:.1f}%)")
 
 # Save
 print(f"\n💾 Saving engineered features...")
@@ -428,5 +593,5 @@ df.to_csv('data/btc_with_features.csv')
 print("✅ Saved to: data/btc_with_features.csv")
 
 print("\n" + "="*70)
-print("✅ READY FOR MACHINE LEARNING WITH 104 DIVERSE FEATURES!")
+print(f"✅ READY FOR MACHINE LEARNING WITH {len(feature_cols)} DIVERSE FEATURES!")
 print("="*70)
