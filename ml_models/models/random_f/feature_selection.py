@@ -296,12 +296,31 @@ print(f"\nTotal available features: {len(all_features)}")
 # 1. Create a clean copy with only relevant columns
 df_clean = df[all_features + ['direction', 'price_change_pct']].copy()
 
-# 2. Replace Infinity with NaN (This is the missing step causing your error)
+# 2. Replace Infinity with NaN
 df_clean.replace([np.inf, -np.inf], np.nan, inplace=True)
 
-# 3. Drop NaNs (which now includes the former Infinity values)
+# DEBUG: Find which columns have most NaN values
+nan_counts = df_clean.isna().sum()
+problematic_cols = nan_counts[nan_counts > 0].sort_values(ascending=False)
+print(f"\n  DEBUG: Columns with NaN values ({len(problematic_cols)} total):")
+print(problematic_cols.head(20))
+
+# 3. Instead of dropping all NaN rows, fill NaN with column median for features
+# (Only drop rows where TARGET is NaN, which we already did)
 rows_before = len(df_clean)
-df_clean = df_clean.dropna()
+
+# Fill NaN in feature columns with median (safer than dropping all rows)
+for col in all_features:
+    if df_clean[col].isna().any():
+        median_val = df_clean[col].median()
+        if pd.isna(median_val):
+            median_val = 0  # If all values are NaN, use 0
+        df_clean[col].fillna(median_val, inplace=True)
+
+# Now check if any NaN remain (should only be in targets, which are already clean)
+remaining_nan = df_clean.isna().sum().sum()
+print(f"  DEBUG: Remaining NaN after filling: {remaining_nan}")
+
 rows_after = len(df_clean)
 
 print(f"🧹 Data Cleaning Report:")

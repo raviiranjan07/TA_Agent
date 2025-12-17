@@ -5,13 +5,7 @@ import { useTradingContext } from '../context/TradingContext';
 const TradingViewChart = () => {
   const chartContainerRef = useRef(null);
   const chartRef = useRef(null);
-  const candlestickSeriesRef = useRef(null);
-  const volumeSeriesRef = useRef(null);
-  const ma7SeriesRef = useRef(null);
-  const ma20SeriesRef = useRef(null);
-  const ma50SeriesRef = useRef(null);
-  const bbUpperSeriesRef = useRef(null);
-  const bbLowerSeriesRef = useRef(null);
+  const seriesRef = useRef({});
   const priceLineRef = useRef(null);
 
   const {
@@ -79,8 +73,8 @@ const TradingViewChart = () => {
 
     chartRef.current = chart;
 
-    // Create candlestick series
-    candlestickSeriesRef.current = chart.addCandlestickSeries({
+    // Candlestick series (v4 API)
+    seriesRef.current.candlestick = chart.addCandlestickSeries({
       upColor: '#26a69a',
       downColor: '#ef5350',
       borderDownColor: '#ef5350',
@@ -89,16 +83,16 @@ const TradingViewChart = () => {
       wickUpColor: '#26a69a',
     });
 
-    // Create volume series
-    volumeSeriesRef.current = chart.addHistogramSeries({
+    // Volume series (v4 API)
+    seriesRef.current.volume = chart.addHistogramSeries({
       color: 'rgba(38, 166, 154, 0.5)',
       priceFormat: { type: 'volume' },
       priceScaleId: '',
       scaleMargins: { top: 0.85, bottom: 0 },
     });
 
-    // Create MA series
-    ma7SeriesRef.current = chart.addLineSeries({
+    // MA7 line series
+    seriesRef.current.ma7 = chart.addLineSeries({
       color: '#f59e0b',
       lineWidth: 2,
       crosshairMarkerVisible: false,
@@ -106,7 +100,8 @@ const TradingViewChart = () => {
       lastValueVisible: false,
     });
 
-    ma20SeriesRef.current = chart.addLineSeries({
+    // MA20 line series
+    seriesRef.current.ma20 = chart.addLineSeries({
       color: '#3b82f6',
       lineWidth: 2,
       crosshairMarkerVisible: false,
@@ -114,7 +109,8 @@ const TradingViewChart = () => {
       lastValueVisible: false,
     });
 
-    ma50SeriesRef.current = chart.addLineSeries({
+    // MA50 line series
+    seriesRef.current.ma50 = chart.addLineSeries({
       color: '#8b5cf6',
       lineWidth: 2,
       crosshairMarkerVisible: false,
@@ -122,8 +118,8 @@ const TradingViewChart = () => {
       lastValueVisible: false,
     });
 
-    // Create Bollinger Bands series
-    bbUpperSeriesRef.current = chart.addLineSeries({
+    // Bollinger Bands
+    seriesRef.current.bbUpper = chart.addLineSeries({
       color: '#9333ea',
       lineWidth: 1,
       lineStyle: 2,
@@ -132,7 +128,7 @@ const TradingViewChart = () => {
       lastValueVisible: false,
     });
 
-    bbLowerSeriesRef.current = chart.addLineSeries({
+    seriesRef.current.bbLower = chart.addLineSeries({
       color: '#9333ea',
       lineWidth: 1,
       lineStyle: 2,
@@ -158,6 +154,7 @@ const TradingViewChart = () => {
       if (chartRef.current) {
         chartRef.current.remove();
         chartRef.current = null;
+        seriesRef.current = {};
       }
     };
   }, []);
@@ -198,7 +195,7 @@ const TradingViewChart = () => {
   // Update chart data
   useEffect(() => {
     if (!chartData || chartData.length === 0) return;
-    if (!candlestickSeriesRef.current) return;
+    if (!seriesRef.current.candlestick) return;
 
     // Format candlestick data
     const candleData = chartData
@@ -222,52 +219,52 @@ const TradingViewChart = () => {
       .filter((d) => !isNaN(d.time) && d.time > 0)
       .sort((a, b) => a.time - b.time);
 
-    candlestickSeriesRef.current.setData(candleData);
+    seriesRef.current.candlestick.setData(candleData);
 
-    if (showVolume && volumeSeriesRef.current) {
-      volumeSeriesRef.current.setData(volumeData);
-    } else if (volumeSeriesRef.current) {
-      volumeSeriesRef.current.setData([]);
+    if (showVolume && seriesRef.current.volume) {
+      seriesRef.current.volume.setData(volumeData);
+    } else if (seriesRef.current.volume) {
+      seriesRef.current.volume.setData([]);
     }
 
     // MA7
-    if (showMA7 && ma7SeriesRef.current) {
+    if (showMA7 && seriesRef.current.ma7) {
       const ma7Data = chartData
         .filter((d) => d.ma7 != null)
         .map((d) => ({ time: parseTimestamp(d), value: d.ma7 }))
         .filter((d) => !isNaN(d.time) && d.time > 0)
         .sort((a, b) => a.time - b.time);
-      ma7SeriesRef.current.setData(ma7Data);
-    } else if (ma7SeriesRef.current) {
-      ma7SeriesRef.current.setData([]);
+      seriesRef.current.ma7.setData(ma7Data);
+    } else if (seriesRef.current.ma7) {
+      seriesRef.current.ma7.setData([]);
     }
 
     // MA20
-    if (showMA20 && ma20SeriesRef.current) {
+    if (showMA20 && seriesRef.current.ma20) {
       const ma20Data = chartData
         .filter((d) => d.ma20 != null)
         .map((d) => ({ time: parseTimestamp(d), value: d.ma20 }))
         .filter((d) => !isNaN(d.time) && d.time > 0)
         .sort((a, b) => a.time - b.time);
-      ma20SeriesRef.current.setData(ma20Data);
-    } else if (ma20SeriesRef.current) {
-      ma20SeriesRef.current.setData([]);
+      seriesRef.current.ma20.setData(ma20Data);
+    } else if (seriesRef.current.ma20) {
+      seriesRef.current.ma20.setData([]);
     }
 
     // MA50
-    if (showMA50 && ma50SeriesRef.current) {
+    if (showMA50 && seriesRef.current.ma50) {
       const ma50Data = chartData
         .filter((d) => d.ma50 != null)
         .map((d) => ({ time: parseTimestamp(d), value: d.ma50 }))
         .filter((d) => !isNaN(d.time) && d.time > 0)
         .sort((a, b) => a.time - b.time);
-      ma50SeriesRef.current.setData(ma50Data);
-    } else if (ma50SeriesRef.current) {
-      ma50SeriesRef.current.setData([]);
+      seriesRef.current.ma50.setData(ma50Data);
+    } else if (seriesRef.current.ma50) {
+      seriesRef.current.ma50.setData([]);
     }
 
     // Bollinger Bands
-    if (showBB && bbUpperSeriesRef.current && bbLowerSeriesRef.current) {
+    if (showBB && seriesRef.current.bbUpper && seriesRef.current.bbLower) {
       const bbUpperData = chartData
         .filter((d) => d.bb_upper != null)
         .map((d) => ({ time: parseTimestamp(d), value: d.bb_upper }))
@@ -280,11 +277,11 @@ const TradingViewChart = () => {
         .filter((d) => !isNaN(d.time) && d.time > 0)
         .sort((a, b) => a.time - b.time);
 
-      bbUpperSeriesRef.current.setData(bbUpperData);
-      bbLowerSeriesRef.current.setData(bbLowerData);
+      seriesRef.current.bbUpper.setData(bbUpperData);
+      seriesRef.current.bbLower.setData(bbLowerData);
     } else {
-      if (bbUpperSeriesRef.current) bbUpperSeriesRef.current.setData([]);
-      if (bbLowerSeriesRef.current) bbLowerSeriesRef.current.setData([]);
+      if (seriesRef.current.bbUpper) seriesRef.current.bbUpper.setData([]);
+      if (seriesRef.current.bbLower) seriesRef.current.bbLower.setData([]);
     }
 
     // Fit content
@@ -295,19 +292,19 @@ const TradingViewChart = () => {
 
   // Update price line
   useEffect(() => {
-    if (!candlestickSeriesRef.current || !stats?.latest_price) return;
+    if (!seriesRef.current.candlestick || !stats?.latest_price) return;
 
     // Remove existing price line
     if (priceLineRef.current) {
       try {
-        candlestickSeriesRef.current.removePriceLine(priceLineRef.current);
+        seriesRef.current.candlestick.removePriceLine(priceLineRef.current);
       } catch (e) {
         // Ignore if already removed
       }
     }
 
     // Create new price line
-    priceLineRef.current = candlestickSeriesRef.current.createPriceLine({
+    priceLineRef.current = seriesRef.current.candlestick.createPriceLine({
       price: stats.latest_price,
       color: stats.change_24h_percent >= 0 ? '#26a69a' : '#ef5350',
       lineWidth: 1,
