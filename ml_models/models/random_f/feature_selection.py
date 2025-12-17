@@ -180,15 +180,26 @@ print("\n" + "="*70)
 print("📊 Step 2: Creating 3-Class Targets")
 print("="*70)
 
+# DEBUG: Check what we loaded
+print(f"\n  DEBUG: Total rows loaded: {len(df)}")
+print(f"  DEBUG: Columns available: {len(df.columns)}")
+print(f"  DEBUG: 'volatility_20' in columns: {'volatility_20' in df.columns}")
+print(f"  DEBUG: 'close' column NaN count: {df['close'].isna().sum()}")
+
 # 1. Use existing volatility from feature engineering (or calculate if missing)
 if 'volatility_20' in df.columns:
+    print(f"  DEBUG: volatility_20 NaN count: {df['volatility_20'].isna().sum()}")
+    print(f"  DEBUG: volatility_20 sample values: {df['volatility_20'].head(3).tolist()}")
     df['volatility'] = df['volatility_20']
     print("  Using existing volatility_20 column")
 else:
+    print("  WARNING: volatility_20 not found, calculating from returns...")
     if 'returns' not in df.columns:
         df['returns'] = df['close'].pct_change()
     df['volatility'] = df['returns'].rolling(window=20).std()
     print("  Calculated new volatility column")
+
+print(f"  DEBUG: volatility NaN count after assignment: {df['volatility'].isna().sum()}")
 
 # Drop rows where volatility is NaN (warm-up period)
 rows_before = len(df)

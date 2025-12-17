@@ -1,4 +1,4 @@
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { useTradingContext, API_BASE } from '../context/TradingContext';
 
 const useTradingData = () => {
@@ -13,7 +13,14 @@ const useTradingData = () => {
     autoRefresh,
   } = useTradingContext();
 
+  const isFetchingRef = useRef(false);
+  const intervalRef = useRef(null);
+
   const fetchData = useCallback(async () => {
+    // Prevent concurrent fetches
+    if (isFetchingRef.current) return;
+    isFetchingRef.current = true;
+
     setIsLoading(true);
     setError(null);
 
@@ -35,8 +42,8 @@ const useTradingData = () => {
       ]);
 
       // Merge candles with indicators
-      const mergedData = candlesData.candles.map((candle, idx) => {
-        const indicator = indicatorsData.indicators[idx] || {};
+      const mergedData = (candlesData.candles || []).map((candle, idx) => {
+        const indicator = (indicatorsData.indicators || [])[idx] || {};
         return {
           ...candle,
           ...indicator,
@@ -52,24 +59,39 @@ const useTradingData = () => {
 
       setChartData(mergedData);
       setStats(statsData);
-      setIndicators(indicatorsData.indicators);
+      setIndicators(indicatorsData.indicators || []);
     } catch (error) {
       console.error('Error fetching data:', error);
       setError(error.message);
     } finally {
       setIsLoading(false);
+      isFetchingRef.current = false;
     }
   }, [selectedPair, selectedTimeframe, setChartData, setStats, setIndicators, setIsLoading, setError]);
 
-  // Initial fetch and auto-refresh
+  // Initial fetch when pair/timeframe changes
   useEffect(() => {
     fetchData();
+  }, [selectedPair, selectedTimeframe]); // Only refetch on pair/timeframe change
+
+  // Auto-refresh interval
+  useEffect(() => {
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
 
     if (autoRefresh) {
-      const interval = setInterval(fetchData, 60000);
-      return () => clearInterval(interval);
+      intervalRef.current = setInterval(fetchData, 60000);
     }
-  }, [fetchData, autoRefresh]);
+
+    return () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+    };
+  }, [autoRefresh, fetchData]);
 
   return { fetchData };
 };
