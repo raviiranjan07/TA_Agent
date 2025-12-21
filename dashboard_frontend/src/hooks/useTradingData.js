@@ -68,30 +68,39 @@ const useTradingData = () => {
 
       if (!mountedRef.current) return;
 
-      // Merge candles with indicators
+      // Get candles and indicators
       const candles = candlesData.candles || [];
-      const indicators = indicatorsData.indicators || [];
+      const indicatorsList = indicatorsData.indicators || [];
 
-      const mergedData = candles.map((candle, idx) => {
-        const indicator = indicators[idx] || {};
+      console.log(`Fetched ${candles.length} candles and ${indicatorsList.length} indicators`);
+
+      // Create a map of indicators by timestamp for efficient lookup
+      const indicatorMap = new Map();
+      for (const ind of indicatorsList) {
+        if (ind.timestamp) {
+          indicatorMap.set(ind.timestamp, ind);
+        }
+      }
+
+      // Merge candles with matching indicators
+      const mergedData = candles.map((candle) => {
+        const indicator = indicatorMap.get(candle.timestamp) || {};
         return {
           ...candle,
-          ...indicator,
-          displayTime: new Date(candle.time).toLocaleString('en-IN', {
-            timeZone: 'Asia/Kolkata',
-            month: 'short',
-            day: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit'
-          })
+          ma7: indicator.ma7 || null,
+          ma20: indicator.ma20 || null,
+          ma50: indicator.ma50 || null,
+          bb_upper: indicator.bb_upper || null,
+          bb_middle: indicator.bb_middle || null,
+          bb_lower: indicator.bb_lower || null,
         };
       });
 
-      console.log(`Loaded ${mergedData.length} candles`);
+      console.log(`Merged ${mergedData.length} candles with indicators`);
 
       setChartData(mergedData);
       setStats(statsData);
-      setIndicators(indicators);
+      setIndicators(indicatorsList);
     } catch (error) {
       console.error('Error fetching data:', error);
       if (mountedRef.current) {

@@ -837,29 +837,66 @@ async def get_indicators(
     timeframe: str = Query("1h", description="Timeframe"),
     limit: int = Query(200, ge=50, le=1000, description="Number of candles")
 ):
-    """Calculate technical indicators (MA, EMA, RSI, MACD, Bollinger Bands)"""
+    """Calculate technical indicators (MA, EMA, RSI, MACD, Bollinger Bands)
+    Resamples from 1m data if needed.
+    """
     conn = None
     try:
         conn = db.get_connection()
         cursor = conn.cursor()
-        
-        # FIXED: Simpler query without window functions that might fail
-        query = """
-            SELECT 
-                time,
-                close,
-                high,
-                low,
-                volume
-            FROM ohlcv_data
-            WHERE pair = %s AND timeframe = %s
-            ORDER BY time DESC
-            LIMIT %s
-        """
-        
-        cursor.execute(query, (pair, timeframe, limit * 2))  # Get more for MA calculation
+
+        # Map timeframe to interval for resampling
+        interval_map = {
+            '1m': '1 minute',
+            '3m': '3 minutes',
+            '5m': '5 minutes',
+            '15m': '15 minutes',
+            '30m': '30 minutes',
+            '1h': '1 hour',
+            '2h': '2 hours',
+            '4h': '4 hours',
+            '6h': '6 hours',
+            '8h': '8 hours',
+            '12h': '12 hours',
+            '1d': '1 day',
+            '3d': '3 days',
+            '1w': '1 week'
+        }
+
+        interval = interval_map.get(timeframe, '1 hour')
+
+        # Always aggregate from 1m data using time_bucket
+        # Get more data for indicator calculations (need 50+ candles for MA50)
+        fetch_limit = (limit + 100) * 2
+
+        if timeframe == '1m':
+            query = """
+                SELECT time, open, high, low, close, volume
+                FROM ohlcv_data
+                WHERE pair = %s AND timeframe = '1m'
+                ORDER BY time DESC
+                LIMIT %s
+            """
+            cursor.execute(query, (pair, fetch_limit))
+        else:
+            query = f"""
+                SELECT
+                    time_bucket('{interval}', time) as bucket_time,
+                    (array_agg(open ORDER BY time))[1] as open,
+                    MAX(high) as high,
+                    MIN(low) as low,
+                    (array_agg(close ORDER BY time DESC))[1] as close,
+                    SUM(volume) as volume
+                FROM ohlcv_data
+                WHERE pair = %s AND timeframe = '1m'
+                GROUP BY bucket_time
+                ORDER BY bucket_time DESC
+                LIMIT %s
+            """
+            cursor.execute(query, (pair, fetch_limit))
+
         rows = cursor.fetchall()
-        
+
         if not rows:
             cursor.close()
             return {
@@ -868,53 +905,78 @@ async def get_indicators(
                 'timezone': 'IST',
                 'indicators': []
             }
-        
+
+        # Reverse to chronological order for indicator calculation
+        rows = list(reversed(rows))
+
         # Calculate indicators in Python
+        closes = [float(row[4]) for row in rows]  # close is at index 4
+
         indicators = []
-        closes = [float(row[1]) for row in reversed(rows)]
-        
-        for idx, row in enumerate(reversed(rows[-limit:])):  # Only return 'limit' candles
-            ma7 = sum(closes[max(0, idx-6):idx+1]) / min(7, idx+1) if idx >= 0 else closes[idx]
-            ma20 = sum(closes[max(0, idx-19):idx+1]) / min(20, idx+1) if idx >= 19 else None
-            ma50 = sum(closes[max(0, idx-49):idx+1]) / min(50, idx+1) if idx >= 49 else None
-            
-            # Bollinger Bands
+        # Only return the last 'limit' candles with indicators
+        start_idx = max(0, len(rows) - limit)
+
+        for idx in range(start_idx, len(rows)):
+            row = rows[idx]
+
+            # MA7
+            if idx >= 6:
+                ma7 = sum(closes[idx-6:idx+1]) / 7
+            else:
+                ma7 = sum(closes[:idx+1]) / (idx + 1)
+
+            # MA20
             if idx >= 19:
-                ma20_val = ma20
-                stddev = (sum((c - ma20_val)**2 for c in closes[max(0, idx-19):idx+1]) / 20) ** 0.5
-                bb_upper = ma20_val + (2 * stddev)
-                bb_lower = ma20_val - (2 * stddev)
+                ma20 = sum(closes[idx-19:idx+1]) / 20
+            else:
+                ma20 = None
+
+            # MA50
+            if idx >= 49:
+                ma50 = sum(closes[idx-49:idx+1]) / 50
+            else:
+                ma50 = None
+
+            # Bollinger Bands (based on MA20)
+            if idx >= 19 and ma20 is not None:
+                window = closes[idx-19:idx+1]
+                stddev = (sum((c - ma20)**2 for c in window) / 20) ** 0.5
+                bb_upper = ma20 + (2 * stddev)
+                bb_lower = ma20 - (2 * stddev)
+                bb_middle = ma20
             else:
                 bb_upper = None
                 bb_lower = None
-            
+                bb_middle = None
+
             indicators.append({
                 'time': convert_to_ist(row[0]),
                 'timestamp': int(row[0].timestamp() * 1000) if row[0] else 0,
-                'close': float(row[1]) if row[1] else 0,
+                'open': float(row[1]) if row[1] else 0,
                 'high': float(row[2]) if row[2] else 0,
                 'low': float(row[3]) if row[3] else 0,
-                'volume': float(row[4]) if row[4] else 0,
-                'ma7': round(ma7, 2),
+                'close': float(row[4]) if row[4] else 0,
+                'volume': float(row[5]) if row[5] else 0,
+                'ma7': round(ma7, 2) if ma7 else None,
                 'ma20': round(ma20, 2) if ma20 else None,
                 'ma50': round(ma50, 2) if ma50 else None,
-                'ma100': None,  # Would need more data
-                'ma200': None,  # Would need more data
                 'bb_upper': round(bb_upper, 2) if bb_upper else None,
-                'bb_middle': round(ma20, 2) if ma20 else None,
+                'bb_middle': round(bb_middle, 2) if bb_middle else None,
                 'bb_lower': round(bb_lower, 2) if bb_lower else None
             })
-        
+
         cursor.close()
-        
+
         return {
             'pair': pair,
             'timeframe': timeframe,
             'timezone': 'IST',
-            'indicators': indicators
+            'indicators': indicators,
+            'count': len(indicators)
         }
-        
+
     except Exception as e:
+        logger.error(f"Error in get_indicators: {e}")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         if conn:
