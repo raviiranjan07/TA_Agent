@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { createChart, CrosshairMode } from 'lightweight-charts';
 import { useTradingContext } from '../context/TradingContext';
 
@@ -7,6 +7,9 @@ const TradingViewChart = () => {
   const chartRef = useRef(null);
   const seriesRef = useRef({});
   const priceLineRef = useRef(null);
+
+  // State for crosshair OHLCV display
+  const [crosshairData, setCrosshairData] = useState(null);
 
   const {
     chartData,
@@ -17,7 +20,28 @@ const TradingViewChart = () => {
     showBB,
     showVolume,
     stats,
+    selectedPair,
+    selectedTimeframe,
   } = useTradingContext();
+
+  // Format number with commas
+  const formatPrice = (price) => {
+    if (price == null || isNaN(price)) return '—';
+    return parseFloat(price).toLocaleString('en-US', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+  };
+
+  // Format volume
+  const formatVolume = (vol) => {
+    if (vol == null || isNaN(vol)) return '—';
+    const num = parseFloat(vol);
+    if (num >= 1e9) return (num / 1e9).toFixed(2) + 'B';
+    if (num >= 1e6) return (num / 1e6).toFixed(2) + 'M';
+    if (num >= 1e3) return (num / 1e3).toFixed(2) + 'K';
+    return num.toFixed(2);
+  };
 
   // Initialize chart only once
   useEffect(() => {
@@ -28,17 +52,17 @@ const TradingViewChart = () => {
       height: 600,
       layout: {
         background: { type: 'solid', color: '#131722' },
-        textColor: '#787B86',
+        textColor: '#d1d4dc',
         fontSize: 12,
-        fontFamily: "'Trebuchet MS', Roboto, Ubuntu, sans-serif",
+        fontFamily: "-apple-system, BlinkMacSystemFont, 'Trebuchet MS', Roboto, Ubuntu, sans-serif",
       },
       grid: {
         vertLines: {
-          color: '#1e222d',
+          color: 'rgba(42, 46, 57, 0.6)',
           visible: true,
         },
         horzLines: {
-          color: '#1e222d',
+          color: 'rgba(42, 46, 57, 0.6)',
           visible: true,
         },
       },
@@ -62,20 +86,21 @@ const TradingViewChart = () => {
         },
       },
       rightPriceScale: {
-        borderColor: '#2A2E39',
+        borderColor: 'rgba(42, 46, 57, 1)',
         borderVisible: true,
         scaleMargins: { top: 0.1, bottom: 0.2 },
         autoScale: true,
         alignLabels: true,
+        entireTextOnly: true,
       },
       timeScale: {
-        borderColor: '#2A2E39',
+        borderColor: 'rgba(42, 46, 57, 1)',
         borderVisible: true,
         timeVisible: true,
         secondsVisible: false,
-        rightOffset: 5,
-        barSpacing: 6,
-        minBarSpacing: 2,
+        rightOffset: 12,
+        barSpacing: 8,
+        minBarSpacing: 4,
         fixLeftEdge: false,
         fixRightEdge: false,
       },
@@ -90,11 +115,19 @@ const TradingViewChart = () => {
         mouseWheel: true,
         pinch: true,
       },
+      watermark: {
+        visible: true,
+        fontSize: 52,
+        horzAlign: 'center',
+        vertAlign: 'center',
+        color: 'rgba(42, 46, 57, 0.5)',
+        text: selectedPair || 'BTCUSDT',
+      },
     });
 
     chartRef.current = chart;
 
-    // Candlestick series
+    // Candlestick series - TradingView exact colors
     seriesRef.current.candlestick = chart.addCandlestickSeries({
       upColor: '#26a69a',
       downColor: '#ef5350',
@@ -111,12 +144,11 @@ const TradingViewChart = () => {
       },
     });
 
-    // Volume series
+    // Volume series - at bottom overlay
     seriesRef.current.volume = chart.addHistogramSeries({
       color: 'rgba(38, 166, 154, 0.5)',
       priceFormat: { type: 'volume' },
       priceScaleId: 'volume',
-      scaleMargins: { top: 0.85, bottom: 0 },
     });
 
     // Configure volume price scale
@@ -126,55 +158,87 @@ const TradingViewChart = () => {
       visible: false,
     });
 
-    // MA7 line series
+    // MA7 line series - Yellow/Amber
     seriesRef.current.ma7 = chart.addLineSeries({
-      color: '#f59e0b',
+      color: '#F7931A',
       lineWidth: 1,
-      crosshairMarkerVisible: false,
+      crosshairMarkerVisible: true,
+      crosshairMarkerRadius: 4,
       priceLineVisible: false,
       lastValueVisible: false,
-      visible: false,
     });
 
-    // MA20 line series
+    // MA20 line series - Blue
     seriesRef.current.ma20 = chart.addLineSeries({
-      color: '#3b82f6',
+      color: '#2962FF',
       lineWidth: 1,
-      crosshairMarkerVisible: false,
+      crosshairMarkerVisible: true,
+      crosshairMarkerRadius: 4,
       priceLineVisible: false,
       lastValueVisible: false,
-      visible: false,
     });
 
-    // MA50 line series
+    // MA50 line series - Purple
     seriesRef.current.ma50 = chart.addLineSeries({
-      color: '#8b5cf6',
+      color: '#7B1FA2',
       lineWidth: 1,
-      crosshairMarkerVisible: false,
+      crosshairMarkerVisible: true,
+      crosshairMarkerRadius: 4,
       priceLineVisible: false,
       lastValueVisible: false,
-      visible: false,
     });
 
-    // Bollinger Bands
+    // Bollinger Bands - Upper
     seriesRef.current.bbUpper = chart.addLineSeries({
-      color: '#9333ea',
+      color: '#E91E63',
       lineWidth: 1,
-      lineStyle: 2,
+      lineStyle: 0,
       crosshairMarkerVisible: false,
       priceLineVisible: false,
       lastValueVisible: false,
-      visible: false,
     });
 
+    // Bollinger Bands - Lower
     seriesRef.current.bbLower = chart.addLineSeries({
-      color: '#9333ea',
+      color: '#E91E63',
+      lineWidth: 1,
+      lineStyle: 0,
+      crosshairMarkerVisible: false,
+      priceLineVisible: false,
+      lastValueVisible: false,
+    });
+
+    // Bollinger Bands - Middle (SMA 20)
+    seriesRef.current.bbMiddle = chart.addLineSeries({
+      color: '#E91E63',
       lineWidth: 1,
       lineStyle: 2,
       crosshairMarkerVisible: false,
       priceLineVisible: false,
       lastValueVisible: false,
-      visible: false,
+    });
+
+    // Subscribe to crosshair move for OHLCV display
+    chart.subscribeCrosshairMove((param) => {
+      if (!param || !param.time || !param.seriesData) {
+        setCrosshairData(null);
+        return;
+      }
+
+      const candleData = param.seriesData.get(seriesRef.current.candlestick);
+      const volumeData = param.seriesData.get(seriesRef.current.volume);
+
+      if (candleData) {
+        setCrosshairData({
+          time: param.time,
+          open: candleData.open,
+          high: candleData.high,
+          low: candleData.low,
+          close: candleData.close,
+          volume: volumeData?.value || 0,
+          isUp: candleData.close >= candleData.open,
+        });
+      }
     });
 
     // Handle resize
@@ -199,14 +263,30 @@ const TradingViewChart = () => {
     };
   }, []);
 
+  // Update watermark when pair changes
+  useEffect(() => {
+    if (!chartRef.current) return;
+    chartRef.current.applyOptions({
+      watermark: {
+        visible: true,
+        fontSize: 52,
+        horzAlign: 'center',
+        vertAlign: 'center',
+        color: 'rgba(42, 46, 57, 0.5)',
+        text: selectedPair || 'BTCUSDT',
+      },
+    });
+  }, [selectedPair]);
+
   // Update theme
   useEffect(() => {
     if (!chartRef.current) return;
 
     const bgColor = isDarkMode ? '#131722' : '#ffffff';
-    const textColor = isDarkMode ? '#787B86' : '#131722';
-    const gridColor = isDarkMode ? '#1e222d' : '#f0f3fa';
-    const borderColor = isDarkMode ? '#2A2E39' : '#e1e3eb';
+    const textColor = isDarkMode ? '#d1d4dc' : '#131722';
+    const gridColor = isDarkMode ? 'rgba(42, 46, 57, 0.6)' : 'rgba(42, 46, 57, 0.2)';
+    const borderColor = isDarkMode ? 'rgba(42, 46, 57, 1)' : '#e1e3eb';
+    const watermarkColor = isDarkMode ? 'rgba(42, 46, 57, 0.5)' : 'rgba(0, 0, 0, 0.06)';
 
     chartRef.current.applyOptions({
       layout: {
@@ -219,6 +299,9 @@ const TradingViewChart = () => {
       },
       rightPriceScale: { borderColor: borderColor },
       timeScale: { borderColor: borderColor },
+      watermark: {
+        color: watermarkColor,
+      },
     });
   }, [isDarkMode]);
 
@@ -246,7 +329,7 @@ const TradingViewChart = () => {
         low: parseFloat(d.low),
         close: parseFloat(d.close),
       }))
-      .filter((d) => !isNaN(d.time) && d.time > 0 && !isNaN(d.open))
+      .filter((d) => !isNaN(d.time) && d.time > 0 && !isNaN(d.open) && !isNaN(d.high) && !isNaN(d.low) && !isNaN(d.close))
       .sort((a, b) => a.time - b.time);
 
     // Remove duplicates by time
@@ -254,7 +337,7 @@ const TradingViewChart = () => {
       index === self.findIndex((t) => t.time === item.time)
     );
 
-    // Format volume data
+    // Format volume data with proper colors
     const volumeData = chartData
       .map((d) => ({
         time: parseTimestamp(d),
@@ -289,7 +372,7 @@ const TradingViewChart = () => {
         const ma7Data = chartData
           .filter((d) => d.ma7 != null && !isNaN(parseFloat(d.ma7)))
           .map((d) => ({ time: parseTimestamp(d), value: parseFloat(d.ma7) }))
-          .filter((d) => !isNaN(d.time) && d.time > 0)
+          .filter((d) => !isNaN(d.time) && d.time > 0 && !isNaN(d.value))
           .sort((a, b) => a.time - b.time);
         const uniqueMA7 = ma7Data.filter((item, index, self) =>
           index === self.findIndex((t) => t.time === item.time)
@@ -308,7 +391,7 @@ const TradingViewChart = () => {
         const ma20Data = chartData
           .filter((d) => d.ma20 != null && !isNaN(parseFloat(d.ma20)))
           .map((d) => ({ time: parseTimestamp(d), value: parseFloat(d.ma20) }))
-          .filter((d) => !isNaN(d.time) && d.time > 0)
+          .filter((d) => !isNaN(d.time) && d.time > 0 && !isNaN(d.value))
           .sort((a, b) => a.time - b.time);
         const uniqueMA20 = ma20Data.filter((item, index, self) =>
           index === self.findIndex((t) => t.time === item.time)
@@ -327,7 +410,7 @@ const TradingViewChart = () => {
         const ma50Data = chartData
           .filter((d) => d.ma50 != null && !isNaN(parseFloat(d.ma50)))
           .map((d) => ({ time: parseTimestamp(d), value: parseFloat(d.ma50) }))
-          .filter((d) => !isNaN(d.time) && d.time > 0)
+          .filter((d) => !isNaN(d.time) && d.time > 0 && !isNaN(d.value))
           .sort((a, b) => a.time - b.time);
         const uniqueMA50 = ma50Data.filter((item, index, self) =>
           index === self.findIndex((t) => t.time === item.time)
@@ -341,18 +424,24 @@ const TradingViewChart = () => {
     }
 
     // Bollinger Bands
-    if (seriesRef.current.bbUpper && seriesRef.current.bbLower) {
+    if (seriesRef.current.bbUpper && seriesRef.current.bbLower && seriesRef.current.bbMiddle) {
       if (showBB) {
         const bbUpperData = chartData
           .filter((d) => d.bb_upper != null && !isNaN(parseFloat(d.bb_upper)))
           .map((d) => ({ time: parseTimestamp(d), value: parseFloat(d.bb_upper) }))
-          .filter((d) => !isNaN(d.time) && d.time > 0)
+          .filter((d) => !isNaN(d.time) && d.time > 0 && !isNaN(d.value))
           .sort((a, b) => a.time - b.time);
 
         const bbLowerData = chartData
           .filter((d) => d.bb_lower != null && !isNaN(parseFloat(d.bb_lower)))
           .map((d) => ({ time: parseTimestamp(d), value: parseFloat(d.bb_lower) }))
-          .filter((d) => !isNaN(d.time) && d.time > 0)
+          .filter((d) => !isNaN(d.time) && d.time > 0 && !isNaN(d.value))
+          .sort((a, b) => a.time - b.time);
+
+        const bbMiddleData = chartData
+          .filter((d) => d.bb_middle != null && !isNaN(parseFloat(d.bb_middle)))
+          .map((d) => ({ time: parseTimestamp(d), value: parseFloat(d.bb_middle) }))
+          .filter((d) => !isNaN(d.time) && d.time > 0 && !isNaN(d.value))
           .sort((a, b) => a.time - b.time);
 
         const uniqueBBUpper = bbUpperData.filter((item, index, self) =>
@@ -361,16 +450,23 @@ const TradingViewChart = () => {
         const uniqueBBLower = bbLowerData.filter((item, index, self) =>
           index === self.findIndex((t) => t.time === item.time)
         );
+        const uniqueBBMiddle = bbMiddleData.filter((item, index, self) =>
+          index === self.findIndex((t) => t.time === item.time)
+        );
 
         seriesRef.current.bbUpper.setData(uniqueBBUpper);
         seriesRef.current.bbLower.setData(uniqueBBLower);
+        seriesRef.current.bbMiddle.setData(uniqueBBMiddle);
         seriesRef.current.bbUpper.applyOptions({ visible: true });
         seriesRef.current.bbLower.applyOptions({ visible: true });
+        seriesRef.current.bbMiddle.applyOptions({ visible: true });
       } else {
         seriesRef.current.bbUpper.setData([]);
         seriesRef.current.bbLower.setData([]);
+        seriesRef.current.bbMiddle.setData([]);
         seriesRef.current.bbUpper.applyOptions({ visible: false });
         seriesRef.current.bbLower.applyOptions({ visible: false });
+        seriesRef.current.bbMiddle.applyOptions({ visible: false });
       }
     }
 
@@ -404,44 +500,112 @@ const TradingViewChart = () => {
     });
   }, [stats?.latest_price, stats?.change_24h_percent]);
 
+  // Get latest data for display when no crosshair
+  const latestData = chartData && chartData.length > 0 ? chartData[chartData.length - 1] : null;
+  const displayData = crosshairData || (latestData ? {
+    open: parseFloat(latestData.open),
+    high: parseFloat(latestData.high),
+    low: parseFloat(latestData.low),
+    close: parseFloat(latestData.close),
+    volume: parseFloat(latestData.volume),
+    isUp: parseFloat(latestData.close) >= parseFloat(latestData.open),
+  } : null);
+
   return (
     <div className="relative w-full">
+      {/* OHLCV Legend - TradingView Style */}
+      <div
+        className="absolute top-2 left-3 z-10 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs font-mono"
+        style={{ backgroundColor: 'transparent' }}
+      >
+        {/* Symbol and Timeframe */}
+        <div className="flex items-center gap-2">
+          <span className={`font-semibold ${isDarkMode ? 'text-gray-200' : 'text-gray-800'}`}>
+            {selectedPair}
+          </span>
+          <span className={`px-1.5 py-0.5 rounded text-[10px] ${isDarkMode ? 'bg-gray-700 text-gray-300' : 'bg-gray-200 text-gray-600'}`}>
+            {selectedTimeframe}
+          </span>
+        </div>
+
+        {/* OHLC Values */}
+        {displayData && (
+          <>
+            <div className="flex items-center gap-1">
+              <span className={isDarkMode ? 'text-gray-500' : 'text-gray-400'}>O</span>
+              <span className={displayData.isUp ? 'text-[#26a69a]' : 'text-[#ef5350]'}>
+                {formatPrice(displayData.open)}
+              </span>
+            </div>
+            <div className="flex items-center gap-1">
+              <span className={isDarkMode ? 'text-gray-500' : 'text-gray-400'}>H</span>
+              <span className={displayData.isUp ? 'text-[#26a69a]' : 'text-[#ef5350]'}>
+                {formatPrice(displayData.high)}
+              </span>
+            </div>
+            <div className="flex items-center gap-1">
+              <span className={isDarkMode ? 'text-gray-500' : 'text-gray-400'}>L</span>
+              <span className={displayData.isUp ? 'text-[#26a69a]' : 'text-[#ef5350]'}>
+                {formatPrice(displayData.low)}
+              </span>
+            </div>
+            <div className="flex items-center gap-1">
+              <span className={isDarkMode ? 'text-gray-500' : 'text-gray-400'}>C</span>
+              <span className={displayData.isUp ? 'text-[#26a69a]' : 'text-[#ef5350]'}>
+                {formatPrice(displayData.close)}
+              </span>
+            </div>
+            {showVolume && (
+              <div className="flex items-center gap-1">
+                <span className={isDarkMode ? 'text-gray-500' : 'text-gray-400'}>Vol</span>
+                <span className={isDarkMode ? 'text-gray-300' : 'text-gray-600'}>
+                  {formatVolume(displayData.volume)}
+                </span>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
+      {/* Indicator Legend */}
+      {(showMA7 || showMA20 || showMA50 || showBB) && (
+        <div
+          className="absolute top-8 left-3 z-10 flex flex-wrap items-center gap-3 text-[11px]"
+          style={{ backgroundColor: 'transparent' }}
+        >
+          {showMA7 && (
+            <span className="flex items-center gap-1">
+              <span className="w-3 h-0.5" style={{ backgroundColor: '#F7931A' }}></span>
+              <span style={{ color: '#F7931A' }}>MA(7)</span>
+            </span>
+          )}
+          {showMA20 && (
+            <span className="flex items-center gap-1">
+              <span className="w-3 h-0.5" style={{ backgroundColor: '#2962FF' }}></span>
+              <span style={{ color: '#2962FF' }}>MA(20)</span>
+            </span>
+          )}
+          {showMA50 && (
+            <span className="flex items-center gap-1">
+              <span className="w-3 h-0.5" style={{ backgroundColor: '#7B1FA2' }}></span>
+              <span style={{ color: '#7B1FA2' }}>MA(50)</span>
+            </span>
+          )}
+          {showBB && (
+            <span className="flex items-center gap-1">
+              <span className="w-3 h-0.5" style={{ backgroundColor: '#E91E63' }}></span>
+              <span style={{ color: '#E91E63' }}>BOLL(20,2)</span>
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* Chart Container */}
       <div
         ref={chartContainerRef}
         className="w-full"
         style={{ height: '600px' }}
       />
-
-      {/* Legend - Only show when indicators are active */}
-      {(showMA7 || showMA20 || showMA50 || showBB) && (
-        <div className="absolute top-2 left-2 flex flex-wrap gap-3 text-xs z-10 bg-opacity-80 rounded px-2 py-1"
-             style={{ backgroundColor: isDarkMode ? 'rgba(19, 23, 34, 0.8)' : 'rgba(255, 255, 255, 0.8)' }}>
-          {showMA7 && (
-            <span className="flex items-center gap-1">
-              <span className="w-4 h-0.5 bg-amber-500"></span>
-              <span className={isDarkMode ? 'text-gray-300' : 'text-gray-700'}>MA(7)</span>
-            </span>
-          )}
-          {showMA20 && (
-            <span className="flex items-center gap-1">
-              <span className="w-4 h-0.5 bg-blue-500"></span>
-              <span className={isDarkMode ? 'text-gray-300' : 'text-gray-700'}>MA(20)</span>
-            </span>
-          )}
-          {showMA50 && (
-            <span className="flex items-center gap-1">
-              <span className="w-4 h-0.5 bg-purple-500"></span>
-              <span className={isDarkMode ? 'text-gray-300' : 'text-gray-700'}>MA(50)</span>
-            </span>
-          )}
-          {showBB && (
-            <span className="flex items-center gap-1">
-              <span className="w-4 h-0.5 bg-purple-600"></span>
-              <span className={isDarkMode ? 'text-gray-300' : 'text-gray-700'}>BOLL</span>
-            </span>
-          )}
-        </div>
-      )}
     </div>
   );
 };
